@@ -1,0 +1,34 @@
+- id: "1"
+  title: Core scheduler, tray count and midnight reset
+  description: >-
+    Scaffold the Tauri v2 app with the Rust scheduler (pure tick function, injected clock),
+    persisted state, and the tray showing today's drink count. Covers CAP-1, CAP-6 and the
+    due-time half of CAP-2; see stack.md and state-machines.md.
+  spec_checkpoint: true
+  invoke_dev_with: >-
+    Test the tick function with a fake clock: sleep across a due time (single prompt),
+    sleep and quit across midnight, DST change. Until story 2 lands, a due reminder may
+    surface as a placeholder (e.g. log line or tray text).
+- id: "2"
+  title: Reminder popup
+  description: >-
+    The unfocused, always-on-top popup with Drank, Snooze, the mouthfuls hint and the
+    optional timeout, shown on the display in use. Covers the popup half of CAP-2, CAP-3
+    and CAP-14.
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Verify on both macOS and Windows that showing the popup does not take focus from the
+    app being typed in; native window flags may be needed on Windows.
+- id: "3"
+  title: Tray menu actions and interval setting
+  description: >-
+    Tray menu "Log a drink" and "Undo last drink", plus the settings window for the
+    interval and popup timeout, persisted across restarts. Covers CAP-4, CAP-5 and CAP-13.
+  spec_checkpoint: true
+- id: "4"
+  title: Launch at login and packaging
+  description: >-
+    Launch-at-login toggle and a tauri-action CI workflow producing unsigned macOS and
+    Windows installers. Covers CAP-7.
+  spec_checkpoint: true
