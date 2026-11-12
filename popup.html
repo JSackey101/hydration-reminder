@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Hydration Reminder</title>
+    <link rel="stylesheet" href="/src/popup.css" />
+    <script type="module" src="/src/popup.ts"></script>
+  </head>
+  <body>
+    <main role="alertdialog" aria-labelledby="title" aria-describedby="hint">
+      <h1 id="title"><span aria-hidden="true">💧</span> Time for a drink</h1>
+      <p id="hint">A few good mouthfuls, not just a sip.</p>
+      <div class="actions">
+        <button id="snooze" type="button">Snooze 10 min</button>
+        <button id="drank" type="button" class="primary">Drank</button>
+      </div>
+    </main>
+  </body>
+</html>
