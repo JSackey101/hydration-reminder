@@ -20,6 +20,15 @@ public static class W {
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  public struct POINT { public int X, Y; }
+  [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr h, ref POINT p);
+  // The visible content in screen coordinates (excludes the invisible resize border).
+  public static RECT ContentRect(IntPtr h) {
+    RECT c; GetClientRect(h, out c); var p = new POINT();
+    ClientToScreen(h, ref p);
+    return new RECT { Left = p.X, Top = p.Y, Right = p.X + c.Right, Bottom = p.Y + c.Bottom };
+  }
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
@@ -113,16 +122,19 @@ Check "Focus stays in Notepad when the popup appears" ([W]::GetForegroundWindow(
 Send-Text " Still typing with the popup up. "
 $ex = [W]::GetWindowLong($popup, -20)
 Check "Popup is no-activate and topmost" ((($ex -band 0x08000000) -ne 0) -and (($ex -band 0x8) -ne 0)) ("exstyle 0x{0:X8}" -f $ex)
-$r = New-Object W+RECT; [W]::GetWindowRect($popup, [ref]$r) | Out-Null
+$r = [W]::ContentRect($popup)
 $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-Check "Popup sits bottom-right above the taskbar" (($r.Right -le $wa.Right) -and ($r.Bottom -le $wa.Bottom) -and ($r.Right -ge $wa.Right - 40) -and ($r.Bottom -ge $wa.Bottom - 40)) ("popup {0},{1}-{2},{3}; work area {4}" -f $r.Left, $r.Top, $r.Right, $r.Bottom, $wa)
+$gapR = $wa.Right - $r.Right; $gapB = $wa.Bottom - $r.Bottom
+$m = 12 * [W]::GetDpiForWindow($popup) / 96.0
+Check "Popup sits bottom-right, 12 px above the taskbar and from the edge" ([math]::Abs($gapR - $m) -le 2 -and [math]::Abs($gapB - $m) -le 2) ("content {0},{1}-{2},{3}; gaps right {4}, bottom {5}; work area {6}" -f $r.Left, $r.Top, $r.Right, $r.Bottom, $gapR, $gapB, $wa)
 Shot "1-popup-shown"
 # Bottom-right corner of the screen: the taskbar tray, where the count badge is.
 $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 $trayCrop = New-Object System.Drawing.Rectangle ($bounds.Right - 320), ($bounds.Bottom - 60), 320, 60
 Shot "tray-badge-due-4x" $trayCrop 4
 
-# Button centres from popup.css (border 1, padding 20/16; Drank ~74x36, Snooze ~124, gap 8), in DIPs.
+# Button centres from popup.css (border 1, padding 20/16; Drank ~74x36, Snooze ~124, gap 8), in DIPs,
+# measured from the content rect.
 $s = [W]::GetDpiForWindow($popup) / 96.0
 $y = [int]($r.Bottom - 35 * $s)
 $drankX = [int]($r.Right - 58 * $s)

@@ -148,8 +148,17 @@ fn place<R: Runtime>(app: &AppHandle<R>, win: &tauri::WebviewWindow<R>) -> tauri
         let scale = monitor.scale_factor();
         tauri::LogicalPosition::new(x as f64 / scale, y as f64 / scale).into()
     };
+    // Windows puts an invisible resize border around the window, so
+    // `set_position` (outer frame) would leave the visible popup too close to
+    // the edge. Shift by the outer-to-content offset so the content lands at x, y.
     #[cfg(not(target_os = "macos"))]
-    let pos: tauri::Position = tauri::PhysicalPosition::new(x, y).into();
+    let pos: tauri::Position = {
+        let (dx, dy) = match (win.inner_position(), win.outer_position()) {
+            (Ok(i), Ok(o)) => (i.x - o.x, i.y - o.y),
+            _ => (0, 0),
+        };
+        tauri::PhysicalPosition::new(x - dx, y - dy).into()
+    };
     win.set_position(pos)
 }
 
