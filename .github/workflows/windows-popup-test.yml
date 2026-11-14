@@ -1,0 +1,35 @@
+name: Windows popup test
+
+# Builds a debug app on Windows and checks the reminder popup never takes
+# keyboard focus, with screenshots. See scripts/windows-popup-test.ps1.
+on:
+  push:
+    branches: [main, "story-*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  popup:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Build debug app
+        run: npx tauri build --debug --no-bundle
+      - name: Popup focus test
+        shell: pwsh
+        run: ./scripts/windows-popup-test.ps1 -Exe src-tauri/target/debug/hydration-reminder.exe -Out artifacts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-popup-test
+          path: artifacts
