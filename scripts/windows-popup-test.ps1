@@ -98,7 +98,7 @@ Start-Sleep -Seconds 3
 [W]::Focus($npWin)
 Start-Sleep -Milliseconds 500
 Check "Notepad has focus before the reminder" ([W]::GetForegroundWindow() -eq $npWin) (FgName)
-Type "Typing before the reminder. "
+Send-Text "Typing before the reminder. "
 
 $popup = [IntPtr]::Zero
 $visible = Wait-Until {
@@ -110,7 +110,7 @@ if (-not $visible) { Shot "fail-no-popup"; $app.Kill(); $np.Kill(); throw "popup
 
 Start-Sleep -Milliseconds 800
 Check "Focus stays in Notepad when the popup appears" ([W]::GetForegroundWindow() -eq $npWin) (FgName)
-Type " Still typing with the popup up. "
+Send-Text " Still typing with the popup up. "
 $ex = [W]::GetWindowLong($popup, -20)
 Check "Popup is no-activate and topmost" ((($ex -band 0x08000000) -ne 0) -and (($ex -band 0x8) -ne 0)) ("exstyle 0x{0:X8}" -f $ex)
 $r = New-Object W+RECT; [W]::GetWindowRect($popup, [ref]$r) | Out-Null
@@ -134,7 +134,7 @@ $hid = Wait-Until { -not [W]::IsWindowVisible($popup) } 5
 Check "Drank hides the popup" $hid
 Start-Sleep -Milliseconds 500
 Check "Focus is back in Notepad after Drank (#13)" ([W]::GetForegroundWindow() -eq $npWin) (FgName)
-Type "AFTER-DRANK-OK "
+Send-Text "AFTER-DRANK-OK "
 Start-Sleep -Milliseconds 300
 if ($edit -ne [IntPtr]::Zero) {
     Check "Typing after Drank lands in Notepad" ([W]::EditText($edit).Contains("AFTER-DRANK-OK")) ""
