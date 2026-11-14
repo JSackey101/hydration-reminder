@@ -81,7 +81,7 @@ function Wait-Until([scriptblock]$cond, [int]$secs, [scriptblock]$each = {}) {
     while ((Get-Date) -lt $end) { & $each; if (& $cond) { return $true }; Start-Sleep -Milliseconds 300 }
     return $false
 }
-function Type([string]$text) { [System.Windows.Forms.SendKeys]::SendWait($text) }
+function Send-Text([string]$text) { [System.Windows.Forms.SendKeys]::SendWait($text) }
 function FgName { $h = [W]::GetForegroundWindow(); "'{0}' (pid {1})" -f [W]::Title($h), [W]::Pid($h) }
 
 # 1. Notepad is the app being typed in.
@@ -104,7 +104,7 @@ $popup = [IntPtr]::Zero
 $visible = Wait-Until {
     if ($popup -eq [IntPtr]::Zero) { $script:popup = [W]::FindTop([uint32]$app.Id, "Hydration Reminder") }
     $popup -ne [IntPtr]::Zero -and [W]::IsWindowVisible($popup)
-} ($IntervalSecs + 30) { Type "." }
+} ($IntervalSecs + 30) { Send-Text "." }
 Check "Popup appears" $visible
 if (-not $visible) { Shot "fail-no-popup"; $app.Kill(); $np.Kill(); throw "popup never appeared" }
 
@@ -143,7 +143,7 @@ Shot "2-after-drank"
 Shot "tray-badge-count-1-4x" $trayCrop 4
 
 # 4. Next reminder, then Snooze.
-$again = Wait-Until { [W]::IsWindowVisible($popup) } ($IntervalSecs + 15) { Type "." }
+$again = Wait-Until { [W]::IsWindowVisible($popup) } ($IntervalSecs + 15) { Send-Text "." }
 Check "Popup appears again one interval after Drank" $again
 if ($again) {
     Start-Sleep -Milliseconds 800
@@ -153,7 +153,7 @@ if ($again) {
     Check "Snooze hides the popup" $hid
     Start-Sleep -Milliseconds 500
     Check "Focus is back in Notepad after Snooze" ([W]::GetForegroundWindow() -eq $npWin) (FgName)
-    Type "AFTER-SNOOZE-OK"
+    Send-Text "AFTER-SNOOZE-OK"
     Start-Sleep -Milliseconds 300
     if ($edit -ne [IntPtr]::Zero) {
         Check "Typing after Snooze lands in Notepad" ([W]::EditText($edit).Contains("AFTER-SNOOZE-OK")) ""
