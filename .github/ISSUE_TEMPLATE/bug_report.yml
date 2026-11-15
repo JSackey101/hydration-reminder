@@ -1,0 +1,36 @@
+name: Bug report
+description: Something doesn't work as described in the README.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. ...\n2. ..."
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: From the Releases page you installed from, e.g. v0.1.0.
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS, Windows]
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log lines
+      description: >-
+        From Hydration Reminder.log (the README's Troubleshooting section says where it is).
+        Issues are public, and the log records when you drank, snoozed and logged drinks, so paste only
+        the lines about the problem and leave those out if you'd rather keep them private.
+      render: text
