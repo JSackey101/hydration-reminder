@@ -1,6 +1,6 @@
-//! The settings window (CAP-5, CAP-14): an ordinary window for the interval and
-//! the popup timeout. Built when "Settings…" is chosen and closed for real, so
-//! it costs nothing while it isn't open.
+//! The settings window (CAP-5, CAP-7, CAP-14): an ordinary window for the
+//! interval, the popup timeout and launch at login. Built when "Settings…" is
+//! chosen and closed for real, so it costs nothing while it isn't open.
 
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
@@ -16,7 +16,7 @@ pub fn open<R: Runtime>(app: &AppHandle<R>) {
             .and_then(|_| win.set_focus()),
         None => WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("settings.html".into()))
             .title("Hydration Reminder Settings")
-            .inner_size(420.0, 220.0)
+            .inner_size(420.0, 264.0)
             .resizable(false)
             .maximizable(false)
             .minimizable(false)
@@ -28,7 +28,7 @@ pub fn open<R: Runtime>(app: &AppHandle<R>) {
             .and_then(|win| win.set_focus()),
     };
     match result {
-        Err(e) => eprintln!("[hydration] warning: settings window failed: {e}"),
+        Err(e) => log::warn!("settings window failed: {e}"),
         // A menu-bar-only (Accessory) app isn't activated by a new window, so
         // the window would open behind the app in use.
         #[cfg(target_os = "macos")]

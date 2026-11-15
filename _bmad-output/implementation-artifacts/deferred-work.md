@@ -5,7 +5,7 @@
 - source_spec: `_bmad-output/specs/spec-hydration-reminder/stories/1-core-scheduler-tray-count-midnight-reset.md`
   summary: Add a log file (e.g. tauri-plugin-log) so warnings are visible in Windows release builds.
   evidence: main.rs sets windows_subsystem = "windows" in release, which drops stderr; corrupt-file resets and save failures leave no trace.
-  home: story 4 (#4, packaging) — issue #10.
+  home: story 4 (#4, packaging) — issue #10. RESOLVED in story 4: tauri-plugin-log writes to the OS log folder; every eprintln! is now a log macro.
 - source_spec: `_bmad-output/specs/spec-hydration-reminder/stories/1-core-scheduler-tray-count-midnight-reset.md`
   summary: Check the Windows tray badge is legible at 16 px (100% DPI) and add a 16 px variant if not.
   evidence: maybe-false, medium if real; badge.rs draws 32 px with 2 px strokes, and Windows downscales tray icons at 100% DPI. Settle at the story 2 Windows checkpoint.
@@ -26,3 +26,7 @@
   summary: Add front-end tests for the settings page logic in `src/settings.ts` (timeout Off sends null, empty timeout fills in 2, non-whole interval refused).
   evidence: Review V4; there is no JS/TS test runner. Rust validates every value (`change_settings`, tested), so the risk is limited to the UI not sending the intended value.
   home: issue #15 (tech-debt, Todo on the board).
+- source_spec: `_bmad-output/specs/spec-hydration-reminder/stories/4-launch-at-login-and-packaging.md`
+  summary: Front-end tests for the "Start at login" checkbox in `src/settings.ts` (a failed change reverts the box and shows the error; a failed load leaves it disabled while the other settings stay usable).
+  evidence: Review V2 (story 4); there is no JS/TS test runner. Checked by hand in the story 4 Mac test (enable failure).
+  home: issue #15 (tech-debt), extended with these cases.

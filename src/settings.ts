@@ -8,6 +8,7 @@ type Settings = { intervalMin: number; popupTimeoutMin: number | null };
 const interval = document.getElementById("interval") as HTMLInputElement;
 const timeoutOn = document.getElementById("timeout-on") as HTMLInputElement;
 const timeout = document.getElementById("timeout") as HTMLInputElement;
+const login = document.getElementById("login") as HTMLInputElement;
 const status = document.getElementById("status") as HTMLParagraphElement;
 
 const DEFAULT_TIMEOUT_MIN = 2;
@@ -57,6 +58,28 @@ async function load() {
   timeout.disabled = !timeoutOn.checked;
 }
 
+// Launch at login lives in the OS (a LaunchAgent or a Run registry entry), so
+// it's read from there each time and sent on its own, not with the settings.
+async function loadLogin() {
+  login.checked = await invoke<boolean>("get_launch_at_login");
+  login.disabled = false;
+}
+
+async function saveLogin() {
+  const enabled = login.checked;
+  login.disabled = true;
+  try {
+    await invoke("set_launch_at_login", { enabled });
+    show("Saved.", false);
+  } catch (e) {
+    login.checked = !enabled;
+    show(String(e), true);
+  } finally {
+    login.disabled = false;
+  }
+}
+
+login.addEventListener("change", saveLogin);
 interval.addEventListener("change", save);
 timeout.addEventListener("change", save);
 timeoutOn.addEventListener("change", () => {
@@ -67,4 +90,9 @@ timeoutOn.addEventListener("change", () => {
   save();
 });
 
-load().catch((e) => show(`Couldn't load settings: ${e}`, true));
+// Separate, so a login-setting failure leaves the other settings usable (its
+// checkbox stays disabled).
+load()
+  .catch((e) => show(`Couldn't load settings: ${e}`, true))
+  .then(() => loadLogin())
+  .catch((e) => show(String(e), true));

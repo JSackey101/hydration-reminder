@@ -31,8 +31,8 @@ pub fn load<Tz: TimeZone>(path: &Path, now: DateTime<Tz>) -> State {
             Err(e) => {
                 let bak = with_suffix(path, ".bak");
                 let copied = fs::copy(path, &bak);
-                eprintln!(
-                    "[hydration] warning: state file {} is corrupt ({e}); backed up to {} ({}), starting from defaults",
+                log::warn!(
+                    "state file {} is corrupt ({e}); backed up to {} ({}), starting from defaults",
                     path.display(),
                     bak.display(),
                     if copied.is_ok() {
@@ -46,8 +46,8 @@ pub fn load<Tz: TimeZone>(path: &Path, now: DateTime<Tz>) -> State {
         },
         Err(e) if e.kind() == io::ErrorKind::NotFound => State::new(now),
         Err(e) => {
-            eprintln!(
-                "[hydration] warning: can't read {} ({e}); starting from defaults",
+            log::warn!(
+                "can't read {} ({e}); starting from defaults",
                 path.display()
             );
             State::new(now)

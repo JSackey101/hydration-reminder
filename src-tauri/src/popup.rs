@@ -71,11 +71,11 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 /// Shows the popup without activating the app. Call on the main thread.
 pub fn show<R: Runtime>(app: &AppHandle<R>) {
     let Some(win) = app.get_webview_window(LABEL) else {
-        eprintln!("[hydration] warning: popup window missing");
+        log::warn!("popup window missing");
         return;
     };
     if let Err(e) = place(app, &win) {
-        eprintln!("[hydration] warning: popup placement failed: {e}");
+        log::warn!("popup placement failed: {e}");
     }
     let shown = {
         #[cfg(windows)]
@@ -88,7 +88,7 @@ pub fn show<R: Runtime>(app: &AppHandle<R>) {
         }
     };
     if let Err(e) = shown {
-        eprintln!("[hydration] warning: popup show failed: {e}");
+        log::warn!("popup show failed: {e}");
     }
 }
 
@@ -108,7 +108,7 @@ pub fn hide<R: Runtime>(app: &AppHandle<R>) {
         }
     };
     if let Err(e) = hidden {
-        eprintln!("[hydration] warning: popup hide failed: {e}");
+        log::warn!("popup hide failed: {e}");
     }
 }
 
@@ -224,7 +224,7 @@ mod mac {
     /// popup also needs to be a full-screen auxiliary window. Main thread only.
     pub fn show_over_full_screen<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>) {
         let Ok(ptr) = win.ns_window() else {
-            eprintln!("[hydration] warning: no NSWindow for the popup");
+            log::warn!("no NSWindow for the popup");
             return;
         };
         // SAFETY: Tauri returns the live NSWindow of this window, and we're on
