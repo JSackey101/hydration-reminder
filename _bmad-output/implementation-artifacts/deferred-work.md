@@ -22,3 +22,7 @@
   summary: When CAP-8 (hold reminders during full-screen apps) is built, stop the macOS popup showing over full-screen apps (`FullScreenAuxiliary` in popup.rs) or hold the reminder before it is shown.
   evidence: Sourcery S6 on PR #14; story 2 added FullScreenAuxiliary on purpose (review B6) because CAP-2 has no full-screen exception today.
   home: phase 2 — issue #5 (CAP-8), comment added.
+- source_spec: `_bmad-output/specs/spec-hydration-reminder/stories/3-tray-menu-actions-and-interval-setting.md`
+  summary: Add front-end tests for the settings page logic in `src/settings.ts` (timeout Off sends null, empty timeout fills in 2, non-whole interval refused).
+  evidence: Review V4; there is no JS/TS test runner. Rust validates every value (`change_settings`, tested), so the risk is limited to the UI not sending the intended value.
+  home: issue #15 (tech-debt, Todo on the board).

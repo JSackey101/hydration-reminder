@@ -153,6 +153,70 @@ pub fn on_load(mut state: State) -> State {
     state
 }
 
+/// Tray "Log a drink" (CAP-4). With the popup open it counts as Drank and
+/// closes it; otherwise it adds a drink and restarts the interval.
+pub fn log_drink<Tz: TimeZone>(now: DateTime<Tz>, mut s: State) -> State {
+    if s.phase == Phase::Prompting {
+        return answer(now, s, Answer::Drank);
+    }
+    let now = now.with_timezone(&Utc);
+    s.drinks.push(Drink {
+        at: now,
+        prev_next_due_at: s.next_due_at,
+    });
+    s.next_due_at = now + s.interval();
+    s.phase = Phase::Waiting;
+    s
+}
+
+/// Tray "Undo last drink" (CAP-13). Removes today's last drink. If that drink
+/// set the current due time, the due time goes back to what it was before it
+/// (if that has passed, the next tick prompts, so undoing a popup Drank brings
+/// the popup back). If anything moved the schedule since (a reminder fired,
+/// was snoozed or timed out, or a shorter interval pulled it in), the schedule
+/// is left alone. No drinks: no change.
+pub fn undo(mut s: State) -> State {
+    let Some(drink) = s.drinks.pop() else {
+        return s;
+    };
+    if s.phase == Phase::Waiting && s.next_due_at == drink.at + s.interval() {
+        s.next_due_at = drink.prev_next_due_at;
+    }
+    s
+}
+
+pub const INTERVAL_RANGE_MIN: std::ops::RangeInclusive<u32> = 1..=240;
+pub const TIMEOUT_RANGE_MIN: std::ops::RangeInclusive<u32> = 1..=60;
+
+/// Settings window (CAP-5, CAP-14). Rejects out-of-range values and leaves the
+/// state unchanged. A shorter interval pulls a later due time in on the next
+/// tick (the clamp in `tick`); a longer one applies from the next drink.
+pub fn set_settings(
+    mut s: State,
+    interval_min: u32,
+    popup_timeout_min: Option<u32>,
+) -> Result<State, String> {
+    if !INTERVAL_RANGE_MIN.contains(&interval_min) {
+        return Err(format!(
+            "Interval must be {}–{} minutes.",
+            INTERVAL_RANGE_MIN.start(),
+            INTERVAL_RANGE_MIN.end()
+        ));
+    }
+    if let Some(t) = popup_timeout_min
+        && !TIMEOUT_RANGE_MIN.contains(&t)
+    {
+        return Err(format!(
+            "Timeout must be Off or {}–{} minutes.",
+            TIMEOUT_RANGE_MIN.start(),
+            TIMEOUT_RANGE_MIN.end()
+        ));
+    }
+    s.settings.interval_min = interval_min;
+    s.settings.popup_timeout_min = popup_timeout_min;
+    Ok(s)
+}
+
 pub fn tick<Tz: TimeZone>(now: DateTime<Tz>, mut s: State) -> (State, Action) {
     let today = now.date_naive();
     let now = now.with_timezone(&Utc);
@@ -606,5 +670,158 @@ mod tests {
         let s = answer(at(2026, 6, 2, 0, 2), s, Answer::Drank);
         assert_eq!(s.count(), 1);
         assert_eq!(s.history[&NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()], 5);
+    }
+
+    // Story 3: tray log, undo, settings.
+
+    #[test]
+    fn log_while_waiting_counts_and_restarts_interval() {
+        let s = with_drinks(State::new(at(2026, 6, 1, 9, 0)), 3);
+        let due = s.next_due_at;
+        let s = log_drink(at(2026, 6, 1, 9, 20), s);
+        assert_eq!(s.count(), 4);
+        assert_eq!(s.phase, Phase::Waiting);
+        assert_eq!(s.next_due_at, utc(at(2026, 6, 1, 10, 5)));
+        assert_eq!(s.drinks.last().unwrap().prev_next_due_at, due);
+    }
+
+    #[test]
+    fn log_while_prompting_counts_as_drank() {
+        let s = prompting(3);
+        let now = at(2026, 6, 1, 9, 47);
+        assert_eq!(log_drink(now, s.clone()), answer(now, s, Answer::Drank));
+    }
+
+    #[test]
+    fn log_while_snoozed_counts_and_waits_an_interval() {
+        let s = answer(at(2026, 6, 1, 9, 46), prompting(3), Answer::Snooze);
+        let s = log_drink(at(2026, 6, 1, 9, 50), s);
+        assert_eq!(s.count(), 4);
+        assert_eq!(s.phase, Phase::Waiting);
+        assert_eq!(s.next_due_at, utc(at(2026, 6, 1, 10, 35)));
+    }
+
+    #[test]
+    fn undo_after_log_restores_due_time() {
+        let before = State::new(at(2026, 6, 1, 9, 0)); // due 9:45
+        let s = log_drink(at(2026, 6, 1, 9, 20), before.clone());
+        let s = undo(s);
+        assert_eq!(s.count(), 0);
+        assert_eq!(s.phase, Phase::Waiting);
+        assert_eq!(s.next_due_at, before.next_due_at);
+    }
+
+    #[test]
+    fn undo_to_a_passed_due_time_prompts_on_next_tick() {
+        let s = log_drink(at(2026, 6, 1, 9, 20), State::new(at(2026, 6, 1, 9, 0)));
+        let s = undo(s); // due 9:45 again
+        let (_, a) = tick(at(2026, 6, 1, 9, 50), s);
+        assert_eq!(a, Action::ShowPopup);
+    }
+
+    #[test]
+    fn undo_while_prompting_or_snoozed_keeps_schedule() {
+        let p = prompting(3);
+        let s = undo(p.clone());
+        assert_eq!(s.count(), 2);
+        assert_eq!(
+            (s.phase, s.next_due_at, s.popup_shown_at),
+            (p.phase, p.next_due_at, p.popup_shown_at)
+        );
+
+        let z = answer(at(2026, 6, 1, 9, 46), prompting(3), Answer::Snooze);
+        let s = undo(z.clone());
+        assert_eq!(s.count(), 2);
+        assert_eq!((s.phase, s.next_due_at), (Phase::Snoozed, z.next_due_at));
+    }
+
+    #[test]
+    fn undo_after_a_timed_out_popup_keeps_schedule() {
+        let mut s = log_drink(at(2026, 6, 1, 9, 10), State::new(at(2026, 6, 1, 9, 0)));
+        s.settings.popup_timeout_min = Some(2);
+        let (s, a) = tick(at(2026, 6, 1, 9, 55), s);
+        assert_eq!(a, Action::ShowPopup);
+        let (s, a) = tick(at(2026, 6, 1, 9, 57), s);
+        assert_eq!(a, Action::TimedOut);
+        let due = s.next_due_at; // 10:42
+        let s = undo(s);
+        assert_eq!(s.count(), 0);
+        assert_eq!(s.next_due_at, due);
+        let (_, a) = tick(at(2026, 6, 1, 9, 58), s);
+        assert_eq!(a, Action::None);
+    }
+
+    #[test]
+    fn undo_of_a_popup_drank_brings_the_popup_back() {
+        let s = answer(at(2026, 6, 1, 9, 46), prompting(0), Answer::Drank);
+        let s = undo(s);
+        assert_eq!(s.count(), 0);
+        assert_eq!(s.next_due_at, utc(at(2026, 6, 1, 9, 45)));
+        let (_, a) = tick(at(2026, 6, 1, 9, 47), s);
+        assert_eq!(a, Action::ShowPopup);
+    }
+
+    #[test]
+    fn undo_with_no_drinks_changes_nothing() {
+        let s = State::new(at(2026, 6, 1, 9, 0));
+        assert_eq!(undo(s.clone()), s);
+    }
+
+    #[test]
+    fn undo_steps_back_through_drinks() {
+        let s = State::new(at(2026, 6, 1, 9, 0));
+        let s = log_drink(at(2026, 6, 1, 9, 10), s);
+        let s = log_drink(at(2026, 6, 1, 9, 20), s);
+        let s = undo(s);
+        assert_eq!(s.next_due_at, utc(at(2026, 6, 1, 9, 55)));
+        let s = undo(s);
+        assert_eq!(s.next_due_at, utc(at(2026, 6, 1, 9, 45)));
+        assert_eq!(s.count(), 0);
+    }
+
+    #[test]
+    fn shorter_interval_pulls_due_time_in() {
+        let s = State::new(at(2026, 6, 1, 9, 0)); // due 9:45
+        let s = set_settings(s, 15, None).unwrap();
+        let (s, a) = tick(at(2026, 6, 1, 9, 5), s); // due in 40 min > 15
+        assert_eq!(a, Action::None);
+        assert_eq!(s.next_due_at, utc(at(2026, 6, 1, 9, 20)));
+    }
+
+    #[test]
+    fn longer_interval_keeps_due_time_until_next_drink() {
+        let s = State::new(at(2026, 6, 1, 9, 0)); // due 9:45
+        let s = set_settings(s, 90, None).unwrap();
+        let (s, _) = tick(at(2026, 6, 1, 9, 35), s);
+        assert_eq!(s.next_due_at, utc(at(2026, 6, 1, 9, 45)));
+        let s = log_drink(at(2026, 6, 1, 9, 40), s);
+        assert_eq!(s.next_due_at, utc(at(2026, 6, 1, 11, 10)));
+    }
+
+    #[test]
+    fn timeout_set_while_prompting_applies_on_next_tick() {
+        let s = prompting(0); // shown 9:45
+        let (s, a) = tick(at(2026, 6, 1, 9, 50), s);
+        assert_eq!(a, Action::None);
+        let s = set_settings(s, 45, Some(2)).unwrap();
+        let (s, a) = tick(at(2026, 6, 1, 9, 50) + Duration::seconds(1), s);
+        assert_eq!(a, Action::TimedOut);
+        assert_eq!(s.phase, Phase::Waiting);
+    }
+
+    #[test]
+    fn settings_out_of_range_are_rejected() {
+        let s = State::new(at(2026, 6, 1, 9, 0));
+        for (i, t) in [(0, None), (241, None), (45, Some(0)), (45, Some(61))] {
+            assert!(set_settings(s.clone(), i, t).is_err(), "{i} {t:?}");
+        }
+        for (i, t) in [(1, None), (240, Some(60)), (30, Some(1))] {
+            let ok = set_settings(s.clone(), i, t).unwrap();
+            assert_eq!(
+                (ok.settings.interval_min, ok.settings.popup_timeout_min),
+                (i, t)
+            );
+            assert_eq!(ok.settings.snooze_min, 10);
+        }
     }
 }
