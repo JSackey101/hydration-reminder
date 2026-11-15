@@ -144,3 +144,22 @@ Reviewers: B = Blind Hunter, E = Edge Case Hunter, V = Verification Gap.
 - Mac UI test: toggle on → `~/Library/LaunchAgents/Hydration Reminder.plist` exists; toggle off → gone; reopening settings shows the right state. Remove any test plist afterwards.
 - Log file appears under `~/Library/Logs/com.jeffsackey.hydration-reminder/`.
 - User installs the Windows build and checks it starts at login (CI can't log in).
+
+### Sourcery review on PR #17
+
+| # | Finding | Verdict | Evidence | Route |
+|---|---|---|---|---|
+| S1 | PR builds get a `contents: write` token | false | GitHub gives `pull_request` runs from forks a read-only token; same-repo branches are the owner's own code | rejected |
+| S2 | An entry removed between the startup check and the refresh is recreated | low | Needs the entry removed within the milliseconds between `is_enabled` and `enable` at startup | rejected |
+| S3 | First enable fails, then the user turns it on and off → re-enabled on the next launch | low | Real, but needs a failed first enable (it only writes a plist or Run value); the user can turn it off again and it sticks once the marker is written | rejected |
+| S4 | Marker write fails → off is undone on every launch | low | Same as E3: the folder also holds `state.json`, so the app can't save state there either | rejected |
+| S5 | An `is_enabled` error skips the refresh | low | On macOS it checks whether the plist exists; the only effect is one skipped refresh | rejected |
+| S6 | `pull_request.paths` misses `package.json` and the lock files | low | Dependency bumps still build on the tag run, and `windows-popup-test` builds every PR | rejected |
+| S7 | Closing and reopening Settings during a pending toggle shows the old state | low | The request takes milliseconds; reopening shows the real state | rejected |
+| S8 | The new workflow can't run on its own PR | false | Release run 43752243580 (`pull_request`) succeeded and uploaded the universal `.dmg`, `.msi` and `-setup.exe` | rejected |
+| S9 | Issue #10 asked for the app data folder, not the log folder | false | #10 said "e.g."; the OS log folder is the standard place and the README documents it. The Windows CI check found the file there | rejected |
+| S10 | `../../releases` leaves the repository | false | From `/<owner>/<repo>/blob/main/README.md`, `../../releases` resolves to `/<owner>/<repo>/releases` | rejected |
+
+- **CI on PR #17:**
+  - Windows popup test passed, including the new "Log file records the reminder (#10)" check.
+  - The Release workflow built `Hydration Reminder_0.1.0_universal.dmg` (`lipo`: x86_64 arm64; `Signature=adhoc`), plus `_x64_en-US.msi` and `_x64-setup.exe`.
