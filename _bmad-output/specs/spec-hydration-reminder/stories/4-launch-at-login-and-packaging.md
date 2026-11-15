@@ -151,7 +151,7 @@ Reviewers: B = Blind Hunter, E = Edge Case Hunter, V = Verification Gap.
 |---|---|---|---|---|
 | S1 | PR builds get a `contents: write` token | false | GitHub gives `pull_request` runs from forks a read-only token; same-repo branches are the owner's own code | rejected |
 | S2 | An entry removed between the startup check and the refresh is recreated | low | Needs the entry removed within the milliseconds between `is_enabled` and `enable` at startup | rejected |
-| S3 | First enable fails, then the user turns it on and off → re-enabled on the next launch | low | Real, but needs a failed first enable (it only writes a plist or Run value); the user can turn it off again and it sticks once the marker is written | rejected |
+| S3 | First enable fails, then the user turns it on and off → re-enabled on the next launch | low | Real, but needs a failed first enable (it only writes a plist or Run value); the user can turn it off again and it sticks once the marker is written | defer: issue #18 (user: non-blocking but valid → issue) |
 | S4 | Marker write fails → off is undone on every launch | low | Same as E3: the folder also holds `state.json`, so the app can't save state there either | rejected |
 | S5 | An `is_enabled` error skips the refresh | low | On macOS it checks whether the plist exists; the only effect is one skipped refresh | rejected |
 | S6 | `pull_request.paths` misses `package.json` and the lock files | low | Dependency bumps still build on the tag run, and `windows-popup-test` builds every PR | rejected |

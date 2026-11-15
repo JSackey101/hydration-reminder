@@ -30,3 +30,7 @@
   summary: Front-end tests for the "Start at login" checkbox in `src/settings.ts` (a failed change reverts the box and shows the error; a failed load leaves it disabled while the other settings stay usable).
   evidence: Review V2 (story 4); there is no JS/TS test runner. Checked by hand in the story 4 Mac test (enable failure).
   home: issue #15 (tech-debt), extended with these cases.
+- source_spec: `_bmad-output/specs/spec-hydration-reminder/stories/4-launch-at-login-and-packaging.md`
+  summary: An explicit "off" in Settings can be undone on the next launch when the first-launch default enable had failed (no marker written).
+  evidence: Sourcery S3 on PR #17. `set_launch_at_login` doesn't write `autostart-initialised`, so `autostart_step` still returns EnableAndMark. Suggested fix: write the marker after any successful explicit change.
+  home: issue #18 (tech-debt, Todo on the board).
