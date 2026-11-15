@@ -2,7 +2,7 @@
 title: 'Story 2: Reminder popup'
 type: 'feature'
 created: '2026-11-11'
-status: 'in-review'
+status: 'done'
 route: 'dispatch'
 review_loop_iteration: 0
 baseline_commit: '7824eefbd4a5939fe491b9f5ffcbea9251a4302d'
@@ -81,6 +81,9 @@ context:
 - `index.html` and `src/main.ts` replaced by `popup.html`, `src/popup.ts`, `src/popup.css`; Vite builds only `popup.html`.
 - Manual Mac test (scripted clicks and typing in TextEdit, 15 s interval): typing reached TextEdit before, during and after the popup appeared; Drank counted and returned focus; Snooze hid the popup and returned focus; the popup sat top-right under the menu bar. Recording: 55 s screen capture kept outside the repo.
 - Real `state.json` was backed up before the test and restored after.
+- **Windows (done checkpoint), by CI instead of the user's PC** (user decision: no dev tools on the PC). `.github/workflows/windows-popup-test.yml` builds a debug app on `windows-2022` and runs `scripts/windows-popup-test.ps1`. The script types into Notepad, waits for the popup, clicks Drank then Snooze with real mouse input, and checks the foreground window each time. It uploads screenshots, including a 4x crop of the tray. Run 43612648267: all 14 checks passed (focus never left Notepad, no taskbar button, `WS_EX_NOACTIVATE` + topmost, popup 12 px from the edge and taskbar). This settles #13.
+- Found by the Windows run: the invisible resize border put the popup 4 px from the screen edge, not 12. `place` now offsets by `inner_position - outer_position` on Windows.
+- #11 (badge legibility): the CI crop shows the digit is only about 5 px tall at 100% DPI. The user hasn't decided yet, so it moves to story 3.
 
 ## Spec Change Log
 
