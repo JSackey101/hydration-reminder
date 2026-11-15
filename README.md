@@ -97,6 +97,13 @@ To remove your saved count and settings too, delete the State and Logs folders l
   To start fresh, quit the app and delete that file. A corrupt file is saved as `state.json.bak` and replaced with
   defaults.
 
+## Contributing
+
+Bug reports, ideas and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up, the
+checks to run and how review works. Report security problems privately: see [SECURITY.md](SECURITY.md).
+
+Hydration Reminder is released under the [MIT license](LICENSE).
+
 ## Develop
 
 The spec lives in `_bmad-output/specs/spec-hydration-reminder/`.
