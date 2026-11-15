@@ -66,6 +66,15 @@ pub enum Action {
     None,
     ShowPopup,
     ResetDay,
+    /// The popup went unanswered past the timeout (CAP-14).
+    TimedOut,
+}
+
+/// The user's answer to the popup (CAP-3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answer {
+    Drank,
+    Snooze,
 }
 
 impl State {
@@ -100,6 +109,38 @@ impl State {
     pub fn snooze(&self) -> Duration {
         Duration::minutes(self.settings.snooze_min.max(1).into())
     }
+
+    /// `None` = the popup stays until answered. A 0 is treated as 1 min.
+    pub fn popup_timeout(&self) -> Option<Duration> {
+        self.settings
+            .popup_timeout_min
+            .map(|m| Duration::minutes(m.max(1).into()))
+    }
+}
+
+/// Applies the user's answer to an open popup. Anything other than Prompting
+/// (a stale or double click) leaves the state unchanged.
+pub fn answer<Tz: TimeZone>(now: DateTime<Tz>, mut s: State, answer: Answer) -> State {
+    if s.phase != Phase::Prompting {
+        return s;
+    }
+    let now = now.with_timezone(&Utc);
+    match answer {
+        Answer::Drank => {
+            s.drinks.push(Drink {
+                at: now,
+                prev_next_due_at: s.next_due_at,
+            });
+            s.next_due_at = now + s.interval();
+            s.phase = Phase::Waiting;
+        }
+        Answer::Snooze => {
+            s.next_due_at = now + s.snooze();
+            s.phase = Phase::Snoozed;
+        }
+    }
+    s.popup_shown_at = None;
+    s
 }
 
 /// Called once after loading saved state. A popup can't survive a restart, so a
@@ -147,6 +188,17 @@ pub fn tick<Tz: TimeZone>(now: DateTime<Tz>, mut s: State) -> (State, Action) {
         s.phase = Phase::Prompting;
         s.popup_shown_at = Some(now);
         return (s, Action::ShowPopup);
+    }
+
+    // 4. Popup timeout (CAP-14): a stored time, so it also fires after sleep.
+    if s.phase == Phase::Prompting
+        && let (Some(shown), Some(timeout)) = (s.popup_shown_at, s.popup_timeout())
+        && now >= shown + timeout
+    {
+        s.phase = Phase::Waiting;
+        s.popup_shown_at = None;
+        s.next_due_at = now + s.interval();
+        return (s, Action::TimedOut);
     }
 
     (s, Action::None)
@@ -437,5 +489,122 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         assert!(!json.contains("interval_override"));
         assert_eq!(s.settings.interval_min, 45);
+    }
+
+    // ---- Story 2: answers and popup timeout ----
+
+    /// Prompting at 9:45 with `n` drinks already today.
+    fn prompting(n: usize) -> State {
+        let s = with_drinks(State::new(at(2026, 6, 1, 9, 0)), n);
+        let (s, a) = tick(at(2026, 6, 1, 9, 45), s);
+        assert_eq!(a, Action::ShowPopup);
+        s
+    }
+
+    #[test]
+    fn drank_counts_and_restarts_interval() {
+        let s = prompting(3);
+        let due = s.next_due_at;
+        let s = answer(at(2026, 6, 1, 9, 47), s, Answer::Drank);
+        assert_eq!(s.count(), 4);
+        assert_eq!(s.phase, Phase::Waiting);
+        assert_eq!(s.popup_shown_at, None);
+        assert_eq!(s.next_due_at, utc(at(2026, 6, 1, 10, 32)));
+        let last = s.drinks.last().unwrap();
+        assert_eq!(last.at, utc(at(2026, 6, 1, 9, 47)));
+        assert_eq!(last.prev_next_due_at, due);
+    }
+
+    #[test]
+    fn snooze_counts_nothing_and_waits_ten_minutes() {
+        let s = answer(at(2026, 6, 1, 9, 46), prompting(3), Answer::Snooze);
+        assert_eq!(s.count(), 3);
+        assert_eq!(s.phase, Phase::Snoozed);
+        assert_eq!(s.popup_shown_at, None);
+        assert_eq!(s.next_due_at, utc(at(2026, 6, 1, 9, 56)));
+    }
+
+    #[test]
+    fn snooze_runs_out_and_prompts_again() {
+        let s = answer(at(2026, 6, 1, 9, 46), prompting(0), Answer::Snooze);
+        let (s, a) = tick(at(2026, 6, 1, 9, 55), s);
+        assert_eq!(a, Action::None);
+        let (s, a) = tick(at(2026, 6, 1, 9, 56), s);
+        assert_eq!(a, Action::ShowPopup);
+        assert_eq!(s.phase, Phase::Prompting);
+    }
+
+    #[test]
+    fn stale_or_double_click_is_ignored() {
+        let waiting = State::new(at(2026, 6, 1, 9, 0));
+        for ans in [Answer::Drank, Answer::Snooze] {
+            assert_eq!(answer(at(2026, 6, 1, 9, 5), waiting.clone(), ans), waiting);
+        }
+        // Double click on Drank: the second press lands in Waiting.
+        let s = answer(at(2026, 6, 1, 9, 46), prompting(0), Answer::Drank);
+        let again = answer(at(2026, 6, 1, 9, 46), s.clone(), Answer::Drank);
+        assert_eq!(again, s);
+        assert_eq!(again.count(), 1);
+        // A click after snoozing is ignored too.
+        let s = answer(at(2026, 6, 1, 9, 46), prompting(0), Answer::Snooze);
+        assert_eq!(answer(at(2026, 6, 1, 9, 47), s.clone(), Answer::Drank), s);
+    }
+
+    #[test]
+    fn timeout_off_popup_stays() {
+        let s = prompting(0);
+        let (s2, a) = tick(at(2026, 6, 1, 12, 45), s.clone());
+        assert_eq!(a, Action::None);
+        assert_eq!(s2, s);
+    }
+
+    #[test]
+    fn timeout_closes_popup_without_counting() {
+        let mut s = prompting(2);
+        s.settings.popup_timeout_min = Some(2);
+        let (s, a) = tick(at(2026, 6, 1, 9, 46), s);
+        assert_eq!(a, Action::None);
+        let (s, a) = tick(at(2026, 6, 1, 9, 47), s);
+        assert_eq!(a, Action::TimedOut);
+        assert_eq!(s.count(), 2);
+        assert_eq!(s.phase, Phase::Waiting);
+        assert_eq!(s.popup_shown_at, None);
+        assert_eq!(s.next_due_at, utc(at(2026, 6, 1, 10, 32)));
+    }
+
+    #[test]
+    fn zero_timeout_is_treated_as_one_minute() {
+        let mut s = prompting(0);
+        s.settings.popup_timeout_min = Some(0);
+        assert_eq!(s.popup_timeout(), Some(Duration::minutes(1)));
+        let (s, a) = tick(at(2026, 6, 1, 9, 45) + Duration::seconds(30), s);
+        assert_eq!(a, Action::None);
+        let (_, a) = tick(at(2026, 6, 1, 9, 46), s);
+        assert_eq!(a, Action::TimedOut);
+    }
+
+    #[test]
+    fn asleep_through_timeout_times_out_once_then_waits_an_interval() {
+        let mut s = prompting(0);
+        s.settings.popup_timeout_min = Some(2);
+        let (s, a) = tick(at(2026, 6, 1, 10, 45), s); // wake 1 h later
+        assert_eq!(a, Action::TimedOut);
+        assert_eq!(s.next_due_at, utc(at(2026, 6, 1, 11, 30)));
+        let (_, a) = tick(at(2026, 6, 1, 10, 46), s);
+        assert_eq!(a, Action::None);
+    }
+
+    #[test]
+    fn midnight_while_prompting_keeps_popup_and_drank_counts_for_new_day() {
+        let s = with_drinks(State::new(at(2026, 6, 1, 23, 0)), 5);
+        let (s, a) = tick(at(2026, 6, 1, 23, 45), s);
+        assert_eq!(a, Action::ShowPopup);
+        let (s, a) = tick(at(2026, 6, 2, 0, 1), s);
+        assert_eq!(a, Action::ResetDay);
+        assert_eq!(s.phase, Phase::Prompting);
+        assert_eq!(s.count(), 0);
+        let s = answer(at(2026, 6, 2, 0, 2), s, Answer::Drank);
+        assert_eq!(s.count(), 1);
+        assert_eq!(s.history[&NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()], 5);
     }
 }

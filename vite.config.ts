@@ -10,6 +10,12 @@ export default defineConfig(() => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
+  // Tray app: the popup is the only page (story 3 adds settings).
+  build: {
+    rollupOptions: {
+      input: { popup: "popup.html" },
+    },
+  },
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 1420,

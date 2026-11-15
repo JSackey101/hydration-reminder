@@ -17,6 +17,6 @@ stateDiagram-v2
 ```
 
 - **Wake from sleep:** if any due time passed while asleep, go to a single Prompting; missed reminders don't stack.
-- **Day rollover:** on any tick or startup where the local date has changed, count → 0 and the undo history clears. The lifecycle state is unaffected.
+- **Day rollover:** on any tick or startup where the local date has changed, count → 0 and the undo history clears. A due time still ahead and a popup already on screen are kept; an overdue reminder left from yesterday is dropped (Waiting, next_due = now+interval), so a new day starts fresh. A popup open when the app quit is not on screen at startup, so it counts as overdue.
 - **Prompting** holds until answered, unless the optional timeout is set.
 - **Undo** after a drink lands back in Waiting with the restored due time; if that time has already passed, the next tick prompts.
