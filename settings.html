@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Hydration Reminder Settings</title>
+    <link rel="stylesheet" href="/src/settings.css" />
+    <script type="module" src="/src/settings.ts"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Settings</h1>
+      <div class="row">
+        <label for="interval">Remind me every</label>
+        <input id="interval" type="number" min="1" max="240" step="1" required disabled />
+        <span>minutes</span>
+      </div>
+      <div class="row">
+        <input id="timeout-on" type="checkbox" disabled />
+        <label for="timeout-on">Close an unanswered popup after</label>
+        <input id="timeout" type="number" min="1" max="60" step="1" aria-label="Popup timeout in minutes" disabled />
+        <span>min</span>
+      </div>
+      <p id="status" role="status" aria-live="polite"></p>
+    </main>
+  </body>
+</html>
