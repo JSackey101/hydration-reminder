@@ -248,6 +248,14 @@ fn autostart_step(is_debug: bool, marker_exists: bool, is_enabled: bool) -> Auto
     }
 }
 
+/// Writes the marker: the first-launch default no longer applies, either
+/// because it has been applied or because the user chose in Settings (#18).
+fn settle_autostart_default(marker: &std::path::Path) {
+    if let Err(e) = std::fs::write(marker, b"") {
+        log::warn!("can't write {} ({e})", marker.display());
+    }
+}
+
 /// Carries out `step`. The marker is written only after a successful enable,
 /// so a failed first enable is retried on the next launch.
 fn run_autostart_step<E: std::fmt::Display>(
@@ -261,9 +269,7 @@ fn run_autostart_step<E: std::fmt::Display>(
     match enable() {
         Ok(()) if step == AutostartStep::EnableAndMark => {
             log::info!("launch at login turned on (first launch)");
-            if let Err(e) = std::fs::write(marker, b"") {
-                log::warn!("can't write {} ({e})", marker.display());
-            }
+            settle_autostart_default(marker);
         }
         Ok(()) => {}
         Err(e) => log::warn!("can't turn on launch at login: {e}"),
@@ -310,6 +316,12 @@ async fn set_launch_at_login(app: AppHandle, enabled: bool) -> Result<(), String
                 "settings: launch at login {}",
                 if enabled { "on" } else { "off" }
             );
+            // An explicit choice wins over the first-launch default, even if
+            // that default failed and never wrote the marker (#18).
+            match app.path().app_data_dir() {
+                Ok(dir) => settle_autostart_default(&dir.join(AUTOSTART_MARKER)),
+                Err(e) => log::warn!("no app data folder for the autostart marker: {e}"),
+            }
             Ok(())
         }
         Err(e) => {
@@ -631,6 +643,25 @@ mod tests {
             Err::<(), _>("denied".to_string())
         });
         assert!(!marker.exists(), "a failed enable is retried next launch");
+    }
+
+    #[test]
+    fn a_choice_in_settings_stops_the_default_after_a_failed_first_enable() {
+        // #18: the first enable failed, so no marker; the user then turns it
+        // on and off in Settings, which settles the default.
+        let marker = marker_in("settled");
+        run_autostart_step(AutostartStep::EnableAndMark, &marker, || {
+            Err::<(), _>("denied".to_string())
+        });
+        assert_eq!(
+            autostart_step(false, marker.exists(), false),
+            AutostartStep::EnableAndMark
+        );
+        settle_autostart_default(&marker);
+        assert_eq!(
+            autostart_step(false, marker.exists(), false),
+            AutostartStep::Nothing
+        );
     }
 
     #[test]

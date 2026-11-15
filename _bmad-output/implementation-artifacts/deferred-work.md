@@ -33,4 +33,4 @@
 - source_spec: `_bmad-output/specs/spec-hydration-reminder/stories/4-launch-at-login-and-packaging.md`
   summary: An explicit "off" in Settings can be undone on the next launch when the first-launch default enable had failed (no marker written).
   evidence: Sourcery S3 on PR #17. `set_launch_at_login` doesn't write `autostart-initialised`, so `autostart_step` still returns EnableAndMark. Suggested fix: write the marker after any successful explicit change.
-  home: issue #18 (tech-debt, Todo on the board).
+  home: issue #18 (tech-debt). RESOLVED in story 4 (PR #17): `set_launch_at_login` writes the marker after any successful change; tested.
