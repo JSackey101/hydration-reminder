@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Manager, Runtime};
+use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
 const TICK: Duration = Duration::from_secs(1);
 
@@ -106,20 +108,20 @@ fn apply<R: Runtime>(app: &AppHandle<R>, f: impl FnOnce(State) -> (State, Action
             }
         });
         if let Err(e) = queued {
-            eprintln!("[hydration] warning: popup update failed: {e}");
+            log::warn!("popup update failed: {e}");
         }
     }
 
     if fx.save {
         match persist::save(&g.path, &g.state) {
             Ok(()) => g.saved = Some(g.state.clone()),
-            Err(e) => eprintln!("[hydration] warning: save failed: {e}"),
+            Err(e) => log::warn!("save failed: {e}"),
         }
     }
 }
 
 fn answer_popup<R: Runtime>(app: &AppHandle<R>, answer: Answer) {
-    eprintln!("[hydration] answer: {answer:?}");
+    log::info!("answer: {answer:?}");
     // Tick first, so a press just after midnight lands on the new day.
     apply(app, |s| {
         let now = Local::now();
@@ -127,14 +129,14 @@ fn answer_popup<R: Runtime>(app: &AppHandle<R>, answer: Answer) {
         (scheduler::answer(now, s, answer), action)
     });
     if let Err(e) = app.run_on_main_thread(popup::restore_focus) {
-        eprintln!("[hydration] warning: focus restore failed: {e}");
+        log::warn!("focus restore failed: {e}");
     }
 }
 
 /// Tray "Log a drink" and "Undo last drink". The tray menu handler runs these
 /// off the main thread (see `apply`). Tick first, as for the popup buttons.
 pub(crate) fn tray_log_drink<R: Runtime>(app: &AppHandle<R>) {
-    eprintln!("[hydration] tray: log a drink");
+    log::info!("tray: log a drink");
     apply(app, |s| {
         let now = Local::now();
         let (s, action) = scheduler::tick(now, s);
@@ -149,7 +151,7 @@ pub(crate) fn tray_log_drink<R: Runtime>(app: &AppHandle<R>) {
 }
 
 pub(crate) fn tray_undo<R: Runtime>(app: &AppHandle<R>) {
-    eprintln!("[hydration] tray: undo last drink");
+    log::info!("tray: undo last drink");
     apply(app, |s| {
         let (s, action) = scheduler::tick(Local::now(), s);
         (scheduler::undo(s), action)
@@ -214,11 +216,125 @@ async fn save_settings(
         (next, Action::None)
     });
     if result.is_ok() {
-        eprintln!(
-            "[hydration] settings: interval {interval_min} min, timeout {popup_timeout_min:?}"
-        );
+        log::info!("settings: interval {interval_min} min, timeout {popup_timeout_min:?}");
     }
     result
+}
+
+/// Marker written once the first launch of a release build has turned on
+/// launch at login, so the default is applied once and a later "off" sticks.
+const AUTOSTART_MARKER: &str = "autostart-initialised";
+
+/// What a launch does about launch at login. Release builds only: a debug run
+/// never registers on its own (the Settings checkbox still works there).
+#[derive(Debug, PartialEq)]
+enum AutostartStep {
+    Nothing,
+    /// First launch: turn it on, then write the marker.
+    EnableAndMark,
+    /// Already on: enable again, so the login entry points at this launch's
+    /// executable. Fixes an entry saved while the app ran from the mounted
+    /// .dmg or a quarantine (App Translocation) path once it runs from
+    /// Applications.
+    Refresh,
+}
+
+fn autostart_step(is_debug: bool, marker_exists: bool, is_enabled: bool) -> AutostartStep {
+    match (is_debug, marker_exists, is_enabled) {
+        (true, _, _) => AutostartStep::Nothing,
+        (false, false, _) => AutostartStep::EnableAndMark,
+        (false, true, true) => AutostartStep::Refresh,
+        (false, true, false) => AutostartStep::Nothing,
+    }
+}
+
+/// Writes the marker: the first-launch default no longer applies, either
+/// because it has been applied or because the user chose in Settings (#18).
+fn settle_autostart_default(marker: &std::path::Path) {
+    if let Err(e) = std::fs::write(marker, b"") {
+        log::warn!("can't write {} ({e})", marker.display());
+    }
+}
+
+/// Carries out `step`. The marker is written only after a successful enable,
+/// so a failed first enable is retried on the next launch.
+fn run_autostart_step<E: std::fmt::Display>(
+    step: AutostartStep,
+    marker: &std::path::Path,
+    enable: impl FnOnce() -> Result<(), E>,
+) {
+    if step == AutostartStep::Nothing {
+        return;
+    }
+    match enable() {
+        Ok(()) if step == AutostartStep::EnableAndMark => {
+            log::info!("launch at login turned on (first launch)");
+            settle_autostart_default(marker);
+        }
+        Ok(()) => {}
+        Err(e) => log::warn!("can't turn on launch at login: {e}"),
+    }
+}
+
+fn default_autostart<R: Runtime>(app: &AppHandle<R>, dir: &std::path::Path) {
+    use tauri_plugin_autostart::ManagerExt;
+    let marker = dir.join(AUTOSTART_MARKER);
+    let manager = app.autolaunch();
+    let is_debug = cfg!(debug_assertions);
+    // Only asked when it matters, so a debug run never touches the entry.
+    let marker_exists = marker.exists();
+    let is_enabled = !is_debug && marker_exists && manager.is_enabled().unwrap_or(false);
+    run_autostart_step(
+        autostart_step(is_debug, marker_exists, is_enabled),
+        &marker,
+        || manager.enable(),
+    );
+}
+
+/// The settings window reads the OS login entry each time; nothing is cached.
+#[tauri::command]
+async fn get_launch_at_login(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|e| {
+        log::warn!("can't read launch at login: {e}");
+        format!("Couldn't read the login setting: {e}")
+    })
+}
+
+#[tauri::command]
+async fn set_launch_at_login(app: AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    let result = if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+    match result {
+        Ok(()) => {
+            log::info!(
+                "settings: launch at login {}",
+                if enabled { "on" } else { "off" }
+            );
+            // An explicit choice wins over the first-launch default, even if
+            // that default failed and never wrote the marker (#18).
+            match app.path().app_data_dir() {
+                Ok(dir) => settle_autostart_default(&dir.join(AUTOSTART_MARKER)),
+                Err(e) => log::warn!("no app data folder for the autostart marker: {e}"),
+            }
+            Ok(())
+        }
+        Err(e) => {
+            log::warn!(
+                "can't turn launch at login {}: {e}",
+                if enabled { "on" } else { "off" }
+            );
+            Err(format!(
+                "Couldn't turn {} start at login: {e}",
+                if enabled { "on" } else { "off" }
+            ))
+        }
+    }
 }
 
 // Async so they run off the main thread (see `apply`).
@@ -235,14 +351,37 @@ async fn snooze(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        // A second launch (e.g. autostart plus a manual start) exits at once,
-        // so two schedulers never share state.json.
+        // Registered first, as the plugin requires: a second launch (e.g.
+        // autostart plus a manual start) exits at once, so two schedulers
+        // never share state.json.
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
+        // Next, so warnings from the other plugins and setup are logged. The
+        // file matters in Windows release builds, which have no console (#10).
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .clear_targets()
+                .targets([
+                    Target::new(TargetKind::Stdout),
+                    Target::new(TargetKind::LogDir { file_name: None }),
+                ])
+                .level(log::LevelFilter::Info)
+                .timezone_strategy(TimezoneStrategy::UseLocal)
+                .max_file_size(1_000_000)
+                // The current file plus up to two rotated ones (about 3 MB).
+                .rotation_strategy(RotationStrategy::KeepSome(2))
+                .build(),
+        )
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .invoke_handler(tauri::generate_handler![
             drank,
             snooze,
             get_settings,
-            save_settings
+            save_settings,
+            get_launch_at_login,
+            set_launch_at_login
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -251,11 +390,12 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let path = dir.join("state.json");
+            default_autostart(app.handle(), &dir);
 
             let mut state = scheduler::on_load(persist::load(&path, Local::now()));
             state.interval_override_secs = interval_override();
             if let Some(secs) = state.interval_override_secs {
-                eprintln!("[hydration] debug: interval overridden to {secs} s");
+                log::info!("debug build: interval overridden to {secs} s");
             }
 
             let tray = tray::Tray::build(app.handle())?;
@@ -287,9 +427,9 @@ pub fn run() {
 
 fn log_action(action: Action, state: &State) {
     match action {
-        Action::ShowPopup => eprintln!("[hydration] reminder due"),
-        Action::ResetDay => eprintln!("[hydration] new day {}: count reset", state.day),
-        Action::TimedOut => eprintln!("[hydration] popup timed out"),
+        Action::ShowPopup => log::info!("reminder due"),
+        Action::ResetDay => log::info!("new day {}: count reset", state.day),
+        Action::TimedOut => log::info!("popup timed out"),
         Action::None => {}
     }
 }
@@ -453,5 +593,101 @@ mod tests {
                 "capability is missing window {label:?}"
             );
         }
+    }
+
+    #[test]
+    fn autostart_step_defaults_on_once_and_refreshes_in_release_builds_only() {
+        use AutostartStep::*;
+        assert_eq!(
+            autostart_step(false, false, false),
+            EnableAndMark,
+            "first launch"
+        );
+        assert_eq!(
+            autostart_step(false, true, true),
+            Refresh,
+            "on: follow the app"
+        );
+        assert_eq!(
+            autostart_step(false, true, false),
+            Nothing,
+            "turned off stays off"
+        );
+        for (marker, on) in [(false, false), (true, true), (true, false)] {
+            assert_eq!(autostart_step(true, marker, on), Nothing, "debug build");
+        }
+    }
+
+    fn marker_in(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "hydration-test-autostart-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(AUTOSTART_MARKER)
+    }
+
+    #[test]
+    fn marker_is_written_only_after_a_successful_first_enable() {
+        let marker = marker_in("ok");
+        run_autostart_step(
+            AutostartStep::EnableAndMark,
+            &marker,
+            || Ok::<_, String>(()),
+        );
+        assert!(marker.exists());
+
+        let marker = marker_in("err");
+        run_autostart_step(AutostartStep::EnableAndMark, &marker, || {
+            Err::<(), _>("denied".to_string())
+        });
+        assert!(!marker.exists(), "a failed enable is retried next launch");
+    }
+
+    #[test]
+    fn a_choice_in_settings_stops_the_default_after_a_failed_first_enable() {
+        // #18: the first enable failed, so no marker; the user then turns it
+        // on and off in Settings, which settles the default.
+        let marker = marker_in("settled");
+        run_autostart_step(AutostartStep::EnableAndMark, &marker, || {
+            Err::<(), _>("denied".to_string())
+        });
+        assert_eq!(
+            autostart_step(false, marker.exists(), false),
+            AutostartStep::EnableAndMark
+        );
+        settle_autostart_default(&marker);
+        assert_eq!(
+            autostart_step(false, marker.exists(), false),
+            AutostartStep::Nothing
+        );
+    }
+
+    #[test]
+    fn refresh_enables_without_writing_and_nothing_does_nothing() {
+        let marker = marker_in("refresh");
+        let mut called = false;
+        run_autostart_step(AutostartStep::Refresh, &marker, || {
+            called = true;
+            Ok::<_, String>(())
+        });
+        assert!(called && !marker.exists());
+
+        let mut called = false;
+        run_autostart_step(AutostartStep::Nothing, &marker, || {
+            called = true;
+            Ok::<_, String>(())
+        });
+        assert!(!called, "enable must not run");
+    }
+
+    #[test]
+    fn js_gets_no_plugin_permissions() {
+        // Launch at login and logging go through our own commands, so the
+        // pages need nothing beyond core.
+        let json: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        assert_eq!(json["permissions"], serde_json::json!(["core:default"]));
     }
 }

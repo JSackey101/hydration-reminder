@@ -116,7 +116,7 @@ impl<R: Runtime> Tray<R> {
             Ok(())
         })();
         if let Err(e) = result {
-            eprintln!("[hydration] warning: tray update failed: {e}");
+            log::warn!("tray update failed: {e}");
         }
     }
 }

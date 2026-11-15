@@ -102,7 +102,8 @@ $edit = [W]::FindWindowEx($npWin, [IntPtr]::Zero, "Edit", $null)
 
 # 2. The app, with a short interval. Fresh state, so the first reminder is one interval away.
 $env:HYDRATION_INTERVAL_SECS = "$IntervalSecs"
-$app = Start-Process $Exe -PassThru -RedirectStandardError (Join-Path $Out "app-stderr.log")
+# Log lines go to stdout and the log file (#10); stderr still catches panics.
+$app = Start-Process $Exe -PassThru -RedirectStandardOutput (Join-Path $Out "app-stdout.log") -RedirectStandardError (Join-Path $Out "app-stderr.log")
 Start-Sleep -Seconds 3
 [W]::Focus($npWin)
 Start-Sleep -Milliseconds 500
@@ -177,6 +178,12 @@ Check "App still running" (-not $app.HasExited) ""
 if ($edit -ne [IntPtr]::Zero) { [W]::EditText($edit) | Set-Content (Join-Path $Out "notepad-text.txt") }
 if (-not $app.HasExited) { $app.Kill() }
 if (-not $np.HasExited) { $np.Kill() }
+
+# The log file (#10): warnings must survive a release build with no console.
+$logFile = Join-Path $env:LOCALAPPDATA "com.jeffsackey.hydration-reminder\logs\Hydration Reminder.log"
+$logText = if (Test-Path $logFile) { Get-Content $logFile -Raw } else { "" }
+Check "Log file records the reminder (#10)" ($logText -match "reminder due") $logFile
+if (Test-Path $logFile) { Copy-Item $logFile (Join-Path $Out "app-logfile.log") }
 
 # Summary
 $md = @("## Windows popup test", "", "| Check | Result | Detail |", "|---|---|---|")
