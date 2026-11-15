@@ -14,7 +14,7 @@ Implementation decisions behind SPEC.md constraints.
 
 ## Scheduler
 
-- Pure function `tick(now, state) -> (state, action)`, where `action` ∈ {none, show_popup, reset_day}. The clock is injected so tests can fake time (sleep, midnight, DST).
+- Pure function `tick(now, state) -> (state, action)`, where `action` ∈ {none, show_popup, reset_day, timed_out}. The clock is injected so tests can fake time (sleep, midnight, DST).
 - State holds `next_due_at` (absolute time) and `day` (local date). Called on a short timer, at startup and on wake.
 - `now >= next_due_at` → show the popup (once, even if several intervals were missed).
 - `local_date(now) != day` → clear today's drinks and set `day`. Phase 2 CAP-11 needs past days kept, so archive the daily count before clearing.

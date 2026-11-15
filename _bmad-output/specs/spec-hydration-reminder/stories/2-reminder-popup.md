@@ -116,6 +116,20 @@ Reviewers: B = Blind Hunter, E = Edge Case Hunter, V = Verification Gap.
 | E7 | CSP blocks Vite HMR in dev | maybe-false (low) | Dev-only; the popup page has no HMR need | rejected |
 | E8 | Code returns focus by re-activating the last app, not `AppHandle::hide` as the frozen text says | low | Intent (focus goes back) is met and tested; `hide` would need an unhide that activates the app. Fix would edit the frozen spec | user reworded the frozen text to match the code |
 
+### Sourcery review on PR #14
+
+| # | Finding | Verdict | Evidence | Route |
+|---|---|---|---|---|
+| S1 | Failed popup show/hide never retried; errors lost in Windows release builds | low | Same as E1; logging is #10 | rejected (logging: issue #10) |
+| S2 | A delayed click from an earlier popup answers a later one | false | Needs an IPC call delayed past a whole interval or snooze; double clicks are already ignored | rejected |
+| S3 | Restart after midnight postpones a reminder that was on screen at quit | false | Story 1's rule: an overdue reminder from yesterday is dropped at rollover. state-machines.md said the opposite | patch: state-machines.md now describes the code |
+| S4 | Popup shown at a stale position if placement fails | low | Same failure class as E1 | rejected |
+| S5 | No clamp for a work area smaller than the popup | low | Same as B8a | rejected |
+| S6 | `FullScreenAuxiliary` conflicts with CAP-8 | false for now | CAP-8 is phase 2; CAP-2 has no full-screen exception today | defer: noted on issue #5 (CAP-8 must stop showing over full-screen apps) |
+| S7 | Windows mixed-DPI: border inset measured on the old monitor | low | Off by a few px of margin at most; similar to B8b | rejected |
+| S8 | A failed `invoke` leaves the popup stuck | low | Same as B12 | rejected |
+| S9 | stack.md action list misses `timed_out` | low | Confirmed | patch: stack.md |
+
 ## Design Notes
 
 Effects follow the phase change, not the `Action`, so ticks and commands share one code path:

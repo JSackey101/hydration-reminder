@@ -18,3 +18,7 @@
   summary: Check whether clicking the popup on Windows takes focus through the WebView2 child window, despite WS_EX_NOACTIVATE.
   evidence: Unverified (review B5); settled by the user's Windows test at the story 2 done checkpoint.
   home: story 2 done checkpoint (Windows test) — issue #13. RESOLVED: Windows CI focus test passed (run 43612648267); issue closed.
+- source_spec: `_bmad-output/specs/spec-hydration-reminder/stories/2-reminder-popup.md`
+  summary: When CAP-8 (hold reminders during full-screen apps) is built, stop the macOS popup showing over full-screen apps (`FullScreenAuxiliary` in popup.rs) or hold the reminder before it is shown.
+  evidence: Sourcery S6 on PR #14; story 2 added FullScreenAuxiliary on purpose (review B6) because CAP-2 has no full-screen exception today.
+  home: phase 2 — issue #5 (CAP-8), comment added.
