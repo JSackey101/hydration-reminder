@@ -12,7 +12,7 @@ Download the latest version from the **[Releases page](https://github.com/JSacke
 | Your computer | Download |
 |---|---|
 | Mac (Intel or Apple Silicon) | the file ending in `_universal.dmg` |
-| Windows 10 or 11 | the file ending in `_x64-setup.exe` (or `.msi` if you prefer, which needs admin rights) |
+| Windows 10 or 11 PC (Intel or AMD; Windows 11 on ARM also works, through emulation) | the file ending in `_x64-setup.exe` (or `.msi` if you prefer, which needs admin rights) |
 
 The app isn't signed with a paid developer certificate, so your computer will warn you the first time you open it.
 That's expected. Here's how to get past it.
