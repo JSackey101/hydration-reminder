@@ -115,6 +115,23 @@ Reviewers: B = Blind Hunter, E = Edge Case Hunter, V = Verification Gap.
 | E9 | AC "used for the next due time" vs longer interval | false | Frozen matrix: a longer interval applies from the next drink | rejected |
 | E10 | Code Map names `undo_drink`, code has `tray_undo` | low | Naming in the spec only | rejected (spec edit) |
 
+### Sourcery review on PR #16
+
+| # | Finding | Verdict | Evidence | Route |
+|---|---|---|---|---|
+| S1 | Old `state.json` drinks lack `prev_next_due_at` and reset on load | false | Story 1 has written `prev_next_due_at` on every drink since the format was created; this PR doesn't change `Drink` | rejected |
+| S2 | Failed disk save still shows "Saved." | low | Same as B2 | rejected (logging: #10) |
+| S3 | Quit right after Log can drop the pending action | low | Needs Quit within milliseconds of Log | rejected |
+| S4 | Log/Undo run out of order | low | Same as E2 | rejected |
+| S5 | Overlapping saves, older wins | low | Same as E3 | rejected |
+| S6 | Lock held during a slow disk write | low | Story 2 design (effects under the lock keep order); a tiny JSON file | rejected |
+| S7 | Undo after an interval change keeps the schedule | low | Deliberate: if the due time no longer equals `drink.at + interval`, undo leaves the schedule alone, which is the safe side | rejected |
+| S8 | Hand-edited timeout 0 blocks an interval change | low | Only from a hand-edited file; the error shows and the field can be fixed | rejected |
+| S9 | Invalid value in one field blocks saving the other | low | Same as B3; normal form behaviour with a visible error | rejected |
+| S10 | Tray render stops at its first setter error | low | Existing pattern from story 1; setter errors need a dead event loop | rejected |
+
+Windows CI (PR #16): popup checks pass; tray crop shows a readable "1" on the blue drop and a red drop when due.
+
 ## Verification
 
 **Commands:**
