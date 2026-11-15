@@ -31,5 +31,6 @@ body:
       label: Log lines
       description: >-
         From Hydration Reminder.log (the README's Troubleshooting section says where it is).
-        Paste only the relevant lines.
+        Issues are public, and the log records when you drank, snoozed and logged drinks, so paste only
+        the lines about the problem and leave those out if you'd rather keep them private.
       render: text

@@ -14,7 +14,7 @@ through a pull request and a review.
 
 You need:
 
-- [Node.js](https://nodejs.org/) 22 and npm
+- [Node.js](https://nodejs.org/) 22.12 or later (or 20.19+), and npm
 - [Rust](https://rustup.rs/) (stable)
 - Tauri's system dependencies for your OS: see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
   (Xcode Command Line Tools on macOS; Microsoft C++ Build Tools and WebView2 on Windows)
@@ -29,6 +29,8 @@ npm run tauri dev                              # run the app
 HYDRATION_INTERVAL_SECS=15 npm run tauri dev   # debug builds only: remind every 15 s
 ```
 
+On Windows PowerShell, set the variable first: `$env:HYDRATION_INTERVAL_SECS = 15; npm run tauri dev`.
+
 A dev run uses the same saved state as an installed copy (`state.json`, see the README's Troubleshooting section).
 Back it up first if you also use the app day to day.
 
@@ -39,9 +41,10 @@ Back it up first if you also use the app day to day.
 3. Run the checks:
 
    ```sh
-   cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings
-   cd .. && npm run build
+   (cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings) && npm run build
    ```
+
+   This stops at the first failure; it's done when the last line is Vite's `✓ built`.
 
 4. Try it in the app on your OS. Say which OS in the PR; the maintainer or CI covers the other one.
 5. Open a pull request against `main` and fill in the template. Keep each PR to one change.
@@ -49,7 +52,8 @@ Back it up first if you also use the app day to day.
 ### What happens to your PR
 
 - **CI:** the Windows popup test builds the app on Windows and checks the popup never steals keyboard focus. PRs
-  that touch the packaging files also build the macOS and Windows installers. A bot (Sourcery) leaves review
+  that change the release workflow, `tauri.conf.json`, `Cargo.toml`/`Cargo.lock` or
+  `package.json`/`package-lock.json` also build the macOS and Windows installers. A bot (Sourcery) leaves review
   comments; treat them as suggestions.
 - **First-time contributors:** GitHub waits for the maintainer to approve before CI runs on your PR. That's a safety
   setting for workflows run from forks, not a judgement on your code.
