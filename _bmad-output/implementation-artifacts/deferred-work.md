@@ -34,3 +34,15 @@
   summary: An explicit "off" in Settings can be undone on the next launch when the first-launch default enable had failed (no marker written).
   evidence: Sourcery S3 on PR #17. `set_launch_at_login` doesn't write `autostart-initialised`, so `autostart_step` still returns EnableAndMark. Suggested fix: write the marker after any successful explicit change.
   home: issue #18 (tech-debt). RESOLVED in story 4 (PR #17): `set_launch_at_login` writes the marker after any successful change; tested.
+- source_spec: `_bmad-output/specs/spec-hydration-reminder/stories/5-keyboard-shortcuts-for-drank-and-snooze.md`
+  summary: Recording ⌘Q / ⌘W / ⌘H on macOS triggers Tauri's default app menu (quit / close / hide) instead of being recorded.
+  evidence: Review E9; tauri app.rs installs Menu::default on macOS, and its accelerators run before the page's keydown handler.
+  home: issue #26 (tech-debt, Todo on the board).
+- source_spec: `_bmad-output/specs/spec-hydration-reminder/stories/5-keyboard-shortcuts-for-drank-and-snooze.md`
+  summary: On non-US layouts the hint can differ from the key (macOS: US key name for the physical key; Windows: punctuation recorded by code).
+  evidence: Reviews E10 and B7; `shortcuts::label` names keys by `Code`, and `keyPart` maps by layout only for letters and digits on Windows.
+  home: issue #27 (tech-debt, Todo on the board).
+- source_spec: `_bmad-output/specs/spec-hydration-reminder/stories/5-keyboard-shortcuts-for-drank-and-snooze.md`
+  summary: No automated tests for the recording code in settings.ts, or for a custom stored shortcut being the one registered.
+  evidence: Reviews V2, V3 and B9; there is no JS test runner and CI uses only the defaults. Checked by hand in the story 5 Mac test.
+  home: issue #15 (tech-debt), extended with these cases.

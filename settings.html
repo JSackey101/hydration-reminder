@@ -24,7 +24,19 @@
         <input id="login" type="checkbox" disabled />
         <label for="login">Start at login</label>
       </div>
-      <p id="status" role="status" aria-live="polite"></p>
+      <h2>Shortcuts</h2>
+      <div class="row shortcut">
+        <span class="name" id="drank-name">Drank</span>
+        <kbd id="drank-key"></kbd>
+        <button id="drank-record" type="button" aria-describedby="drank-name drank-key" disabled>Record</button>
+      </div>
+      <div class="row shortcut">
+        <span class="name" id="snooze-name">Snooze</span>
+        <kbd id="snooze-key"></kbd>
+        <button id="snooze-record" type="button" aria-describedby="snooze-name snooze-key" disabled>Record</button>
+      </div>
+      <p id="shortcut-status" class="status" role="status" aria-live="polite"></p>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
     </main>
   </body>
 </html>

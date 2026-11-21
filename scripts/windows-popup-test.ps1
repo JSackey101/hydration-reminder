@@ -1,6 +1,7 @@
 # Windows popup test (CI): checks the reminder popup never takes keyboard
-# focus, that Drank and Snooze work, and grabs screenshots (incl. the tray
-# badge, issue #11). Needs a debug build, which honours HYDRATION_INTERVAL_SECS.
+# focus, that Drank, Snooze and the Drank shortcut (CAP-15) work, and grabs
+# screenshots (incl. the tray badge, issue #11). Needs a debug build, which
+# honours HYDRATION_INTERVAL_SECS.
 param(
     [string]$Exe = "src-tauri/target/debug/hydration-reminder.exe",
     [string]$Out = "artifacts",
@@ -134,10 +135,10 @@ $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 $trayCrop = New-Object System.Drawing.Rectangle ($bounds.Right - 320), ($bounds.Bottom - 60), 320, 60
 Shot "tray-badge-due-4x" $trayCrop 4
 
-# Button centres from popup.css (border 1, padding 20/16; Drank ~74x36, Snooze ~124, gap 8), in DIPs,
-# measured from the content rect.
+# Button centres from popup.css (border 1, padding 20/16; Drank ~74x36, Snooze ~124, gap 8;
+# an 18 px shortcut hint under each button), in DIPs, measured from the content rect.
 $s = [W]::GetDpiForWindow($popup) / 96.0
-$y = [int]($r.Bottom - 35 * $s)
+$y = [int]($r.Bottom - 53 * $s)
 $drankX = [int]($r.Right - 58 * $s)
 $snoozeX = [int]($r.Right - 165 * $s)
 
@@ -155,12 +156,34 @@ if ($edit -ne [IntPtr]::Zero) {
 Shot "2-after-drank"
 Shot "tray-badge-count-1-4x" $trayCrop 4
 
-# 4. Next reminder, then Snooze.
+# 4. Next reminder, answered with the Drank shortcut (CAP-15) while typing.
 $again = Wait-Until { [W]::IsWindowVisible($popup) } ($IntervalSecs + 15) { Send-Text "." }
 Check "Popup appears again one interval after Drank" $again
 if ($again) {
     Start-Sleep -Milliseconds 800
     Check "Focus stays in Notepad on the second popup" ([W]::GetForegroundWindow() -eq $npWin) (FgName)
+    Shot "3-popup-with-shortcut-hints"
+    $before = if ($edit -ne [IntPtr]::Zero) { [W]::EditText($edit) } else { "" }
+    Send-Text "^%d"
+    $hid = Wait-Until { -not [W]::IsWindowVisible($popup) } 5
+    Check "Ctrl+Alt+D hides the popup" $hid
+    Start-Sleep -Milliseconds 500
+    Check "Focus stays in Notepad after the shortcut" ([W]::GetForegroundWindow() -eq $npWin) (FgName)
+    if ($edit -ne [IntPtr]::Zero) {
+        $after = [W]::EditText($edit)
+        Check "The shortcut types nothing into Notepad" ($after -eq $before) ("before ...'{0}', after ...'{1}'" -f $before.Substring([math]::Max(0, $before.Length - 12)), $after.Substring([math]::Max(0, $after.Length - 12)))
+    }
+    Send-Text "AFTER-SHORTCUT-OK "
+    Shot "4-after-shortcut"
+    Shot "tray-badge-count-2-4x" $trayCrop 4
+}
+
+# 5. Next reminder, then Snooze.
+$third = Wait-Until { [W]::IsWindowVisible($popup) } ($IntervalSecs + 15) { Send-Text "." }
+Check "Popup appears again one interval after the shortcut" $third
+if ($third) {
+    Start-Sleep -Milliseconds 800
+    Check "Focus stays in Notepad on the third popup" ([W]::GetForegroundWindow() -eq $npWin) (FgName)
     [W]::Click($snoozeX, $y)
     $hid = Wait-Until { -not [W]::IsWindowVisible($popup) } 5
     Check "Snooze hides the popup" $hid
@@ -171,7 +194,11 @@ if ($again) {
     if ($edit -ne [IntPtr]::Zero) {
         Check "Typing after Snooze lands in Notepad" ([W]::EditText($edit).Contains("AFTER-SNOOZE-OK")) ""
     }
-    Shot "3-after-snooze"
+    Shot "5-after-snooze"
+    # Released with the popup: the combo reaches Notepad again (it types
+    # nothing there, but must not answer anything).
+    Send-Text "^%d"
+    Start-Sleep -Milliseconds 500
 }
 
 Check "App still running" (-not $app.HasExited) ""
@@ -183,6 +210,9 @@ if (-not $np.HasExited) { $np.Kill() }
 $logFile = Join-Path $env:LOCALAPPDATA "com.jeffsackey.hydration-reminder\logs\Hydration Reminder.log"
 $logText = if (Test-Path $logFile) { Get-Content $logFile -Raw } else { "" }
 Check "Log file records the reminder (#10)" ($logText -match "reminder due") $logFile
+Check "Log records the shortcut answer (CAP-15)" ($logText -match "answer by shortcut: Drank") ""
+Check "Shortcut pressed with no reminder answers nothing" (([regex]::Matches($logText, "answer by shortcut")).Count -eq 1) ""
+Check "Shortcuts registered without warnings" ($logText -notmatch "can't (register|release)") $logFile
 if (Test-Path $logFile) { Copy-Item $logFile (Join-Path $Out "app-logfile.log") }
 
 # Summary
