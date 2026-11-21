@@ -32,3 +32,23 @@
     Launch-at-login toggle and a tauri-action CI workflow producing unsigned macOS and
     Windows installers. Covers CAP-7.
   spec_checkpoint: true
+- id: "5"
+  title: Keyboard shortcuts for Drank and Snooze
+  description: >-
+    Global shortcuts (default Ctrl+Alt+D / Ctrl+Alt+S, ⌃⌥D / ⌃⌥S on macOS), registered only
+    while a reminder is showing and released after; both re-recordable in Settings, with an
+    error shown when a combo can't be registered. Covers CAP-15.
+  spec_checkpoint: true
+  invoke_dev_with: >-
+    Check on both OSes that the shortcut answers the reminder without moving focus from the
+    app being typed in, and that the combo reaches other apps when no reminder is showing.
+- id: "6"
+  title: Small drop reminder style
+  description: >-
+    "Reminder style: Popup / Small drop" setting (Popup default). With Small drop, a due
+    reminder shows a small unfocused drop in the popup's corner; clicking it opens the
+    normal popup, and the story 5 shortcuts answer it directly. Covers CAP-16.
+  spec_checkpoint: true
+  invoke_dev_with: >-
+    The drop window follows the popup's no-focus rules (story 2), including the Windows
+    native flags. Check the popup timeout counts from when the drop appears.

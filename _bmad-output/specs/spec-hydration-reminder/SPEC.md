@@ -47,6 +47,15 @@ A pain to solve. The author forgets to drink water while focused at the computer
   - **intent:** User can have an unanswered popup dismiss itself.
   - **success:** With the timeout off (default), the popup stays until answered. With it set (e.g. 2 min), an unanswered popup closes at that time, counts nothing, and sets the next due time to now + interval.
 
+### Release 2 (v0.2.0)
+
+- **CAP-15**
+  - **intent:** User answers a reminder with a keyboard shortcut instead of clicking.
+  - **success:** While a reminder is showing (popup or drop), Ctrl+Alt+D (⌃⌥D on macOS) works as Drank and Ctrl+Alt+S (⌃⌥S) as Snooze, from any app, without moving focus. When no reminder is showing, the shortcuts aren't registered and the key combos reach other apps. Both shortcuts can be re-recorded in Settings; a combo that can't be registered shows an error there and the buttons still work.
+- **CAP-16**
+  - **intent:** User can choose a quieter reminder: a small drop instead of the popup.
+  - **success:** Settings has "Reminder style: Popup / Small drop", Popup by default. With Small drop, a due reminder shows a small drop icon in the popup's corner instead of the popup, never taking focus. Clicking the drop opens the normal popup; the shortcuts (CAP-15) answer it directly. The popup timeout (CAP-14) applies from when the drop first appears.
+
 ### Phase 2
 
 - **CAP-8**
