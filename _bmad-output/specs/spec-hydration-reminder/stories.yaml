@@ -37,7 +37,8 @@
   description: >-
     Global shortcuts (default Ctrl+Alt+D / Ctrl+Alt+S, ⌃⌥D / ⌃⌥S on macOS), registered only
     while a reminder is showing and released after; both re-recordable in Settings, with an
-    error shown when a combo can't be registered. Covers CAP-15.
+    error shown when a combo can't be registered, and the same combo refused for both actions.
+    Covers CAP-15.
   spec_checkpoint: true
   invoke_dev_with: >-
     Check on both OSes that the shortcut answers the reminder without moving focus from the
