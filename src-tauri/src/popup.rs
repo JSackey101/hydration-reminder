@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
 pub const LABEL: &str = "popup";
 /// Logical size of the popup.
-const SIZE: (f64, f64) = (340.0, 150.0);
+const SIZE: (f64, f64) = (340.0, 168.0);
 /// Logical gap between the popup and the work-area edge.
 const MARGIN: f64 = 12.0;
 
@@ -291,13 +291,13 @@ mod tests {
     fn bottom_right_sits_above_the_taskbar() {
         // 1920x1080 display with a 48 px taskbar, scale 1.
         let (x, y) = popup_position((0, 0), (1920, 1032), SIZE, 1.0, Corner::BottomRight);
-        assert_eq!((x, y), (1920 - 340 - 12, 1032 - 150 - 12));
+        assert_eq!((x, y), (1920 - 340 - 12, 1032 - 168 - 12));
     }
 
     #[test]
     fn second_monitor_offset_is_respected() {
         // Secondary display to the left of the primary, scale 1.5.
         let (x, y) = popup_position((-2560, 0), (2560, 1392), SIZE, 1.5, Corner::BottomRight);
-        assert_eq!((x, y), (-2560 + 2560 - 510 - 18, 1392 - 225 - 18));
+        assert_eq!((x, y), (-2560 + 2560 - 510 - 18, 1392 - 252 - 18));
     }
 }

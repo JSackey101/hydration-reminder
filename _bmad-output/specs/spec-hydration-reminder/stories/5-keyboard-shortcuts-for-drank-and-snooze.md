@@ -2,7 +2,7 @@
 title: 'Story 5: Keyboard shortcuts for Drank and Snooze'
 type: 'feature'
 created: '2026-11-21'
-status: 'ready-for-dev'
+status: 'done'
 route: 'dispatch'
 review_loop_iteration: 0
 baseline_commit: '00111354301ea217ca095e99ee1c231a516e967f'
@@ -109,12 +109,12 @@ context:
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `scheduler.rs`, `shortcuts.rs` -- fields, `parse_or_default`, `validate`, `label` + tests (every refused case, id-based duplicate, label forms, old/bad JSON)
-- [ ] `lib.rs` -- plugin, register/release in the popup task, `answer_by_shortcut`, `save_shortcuts`, `get_shortcut_labels`, view + test update
-- [ ] `settings.html`, `src/settings.ts`, `settings.rs` -- record UI, disabled during reminders
-- [ ] `popup.html`, `src/popup.ts`, `src/popup.css`, `popup.rs` -- key hints
-- [ ] `scripts/windows-popup-test.ps1` -- shortcut on popup 2, Snooze on popup 3, new `$y`
-- [ ] `README.md`
+- [x] `scheduler.rs`, `shortcuts.rs` -- fields, `parse_or_default`, `validate`, `label` + tests (every refused case, id-based duplicate, label forms, old/bad JSON)
+- [x] `lib.rs` -- plugin, register/release in the popup task, `answer_by_shortcut`, `save_shortcuts`, `get_shortcut_labels`, view + test update
+- [x] `settings.html`, `src/settings.ts`, `settings.rs` -- record UI, disabled during reminders
+- [x] `popup.html`, `src/popup.ts`, `src/popup.css`, `popup.rs` -- key hints
+- [x] `scripts/windows-popup-test.ps1` -- shortcut on popup 2, Snooze on popup 3, new `$y`
+- [x] `README.md`
 
 **Acceptance Criteria:**
 - Given a reminder on macOS while typing in TextEdit, when ⌃⌥D is pressed, then the count rises, the popup hides, TextEdit keeps focus and no "d" is typed.
@@ -127,9 +127,42 @@ context:
 
 ## Implementation Notes
 
+- The popup task sends the hints before `popup::show`, registers after it (per spec), and resends the hints if a combo failed to register.
+- `parse_or_default` became `stored_or_defaults(drank, snooze)`: it validates both stored values and falls back to both defaults. This also covers a hand-edited bare key and an equal pair.
+- `save_shortcuts` test-registers only the combos that changed.
+- Mac UI test (2026-11-21): every acceptance criterion passed, including no stray "d" in TextEdit and the custom ⌃⌥⇧W answering the next reminder. Bug found and fixed during the test: Esc left the recording prompt on screen.
+
 ## Spec Change Log
 
 ## Review Triage Log
+
+| # | Layer | Finding | Verdict | Evidence | Route |
+|---|-------|---------|---------|----------|-------|
+| E1 | Edge | `try_register` only warns if the test unregister fails, so a no-op handler stays registered | low | `shortcuts.rs` logged the error and returned Ok; a stuck registration takes the key from other apps | patch: return Err (save refused) |
+| E2 | Edge | Unparsable stored Drank falls back to a default equal to the stored Snooze | low | `parse_or_default` fell back per field, so the second register fails | patch (grouped with E3) |
+| E3 | Edge | A stored combo that parses but fails `validate` (hand-edited bare key) is registered globally | medium | `current_shortcuts` only parsed; a bare "KeyD" would take typing while a reminder shows | patch: `stored_or_defaults` validates and falls back to both defaults |
+| E4 | Edge | Hints are emitted for a combo that failed to register | medium | `register` emitted `Labels::new` regardless; matrix "Combo taken (Windows)" says that key doesn't work | patch: `register` returns live labels (empty for a failed one), resent if different (grouped with B1) |
+| E5 | Edge | "answer by shortcut" is logged for a no-op press, which can make the CI count check flaky | low | The log line ran before the Prompting check | patch: `answer_reminder` returns whether it answered; logs only then (grouped with E11) |
+| E6 | Edge | A failed `get_settings` after a successful save shows an error | low | Real but needs an IPC failure right after a successful one; the fix adds a branch | reject: unlikely, adds complexity |
+| E7 | Edge | "Saved." replaces BUSY when a reminder starts mid-save | low | One shared `#status` | patch (grouped with B6) |
+| E8 | Edge | `reminder-showing` could fire before `listen` registers | low | `listen` and `load` raced at startup | patch: await `listen` before `load` |
+| E9 | Edge | Recording ⌘Q / ⌘W / ⌘H on macOS triggers the default app menu | low | Tauri `app.rs` installs `Menu::default` on macOS | defer: #26 |
+| E10 | Edge | macOS non-US layouts: the hint shows the US key name of the physical key | low | `label` uses the `Code` name; macOS registers by physical key | defer: #27 (with B7) |
+| E11 | Edge | Claim "nothing is logged without a reminder": a press racing the hide logged an answer | low | Same root cause as E5 | patch (E5) |
+| V1 | VerifGap | The Snooze shortcut's binding to `Answer::Snooze` is never exercised | gap | Filed evidence: CI sends only `^%d`; no unit test covers the pairing | patch: pure `bindings()` + `each_shortcut_is_bound_to_its_own_answer` (grouped with B8) |
+| V2 | VerifGap | No automated end-to-end check of a custom recorded shortcut, and no JS tests | gap | Filed evidence: no JS runner; CI uses only the defaults. Checked by hand in the Mac test (⌃⌥⇧W) | defer: #15 extended (grouped with B9) |
+| V3 | VerifGap | macOS CAP-15 and the `save_shortcuts` lock path aren't tested automatically | low | No macOS CI; threading checked by inspection plus the Mac UI test | defer: #15 note (manual Mac test per story) |
+| B1 | Blind | The popup advertises a default shortcut that failed to register | medium | Same root cause as E4 | patch (E4) |
+| B2 | Blind | Saving test-registers the unchanged combo too, so a taken one blocks changing the other | low | `change_shortcuts` tried both | patch: test only the changed combo |
+| B3 | Blind | The raw plugin error is shown to the user | low | `format!(... ({e}))` | patch: log `e`, leave it out of the message |
+| B4 | Blind | The Record buttons can't be told apart by a screen reader; `aria-labelledby` on `<kbd>` does nothing | low | settings.html | patch: `aria-label` per button and state; `aria-describedby` |
+| B5 | Blind | Recording doesn't stop when the window loses focus | low | No blur handler | patch: blur stops recording (Space/Enter on Cancel still recorded and refused; acceptable) |
+| B6 | Blind | Shortcut and settings messages share one status line and overwrite each other | low | One `#status` | patch: own `#shortcut-status`; "Saved." only if no reminder |
+| B7 | Blind | Windows punctuation keys use `e.code`, so the hint or working key can differ on non-US layouts | low | `keyPart` maps only letters and digits by layout | defer: #27 |
+| B8 | Blind | No test of Snooze by shortcut | gap | Same root cause as V1 | patch (V1) |
+| B9 | Blind | The recording code has no tests | gap | Same root cause as V2 | defer: #15 |
+| B10 | Blind | Hints reach the popup after it's visible | low | Emitted after `popup::show` | patch: send labels before show |
+| B11 | Blind | Text: README wording, `apply` doc wrap, ps1 header length, Check detail argument | low | Confirmed at each site | patch |
 
 ## Verification
 
