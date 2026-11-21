@@ -16,6 +16,21 @@ pub struct Settings {
     /// checked here: an unparsable value falls back to its default on use.
     pub drank_shortcut: String,
     pub snooze_shortcut: String,
+    /// How a due reminder shows (CAP-16).
+    pub reminder_style: ReminderStyle,
+}
+
+/// Popup (default) or a small drop that opens the popup when clicked (CAP-16).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReminderStyle {
+    Drop,
+    /// Also what an unknown stored value (a hand edit, a newer version) loads
+    /// as, so it can't make the whole state file unreadable. Last, as
+    /// `serde(other)` requires.
+    #[default]
+    #[serde(other)]
+    Popup,
 }
 
 pub const DEFAULT_DRANK_SHORTCUT: &str = "control+alt+KeyD";
@@ -29,6 +44,7 @@ impl Default for Settings {
             popup_timeout_min: None,
             drank_shortcut: DEFAULT_DRANK_SHORTCUT.into(),
             snooze_shortcut: DEFAULT_SNOOZE_SHORTCUT.into(),
+            reminder_style: ReminderStyle::Popup,
         }
     }
 }
@@ -68,6 +84,13 @@ pub struct State {
     /// Debug-only interval override in seconds. Lives in memory, never saved.
     #[serde(skip)]
     pub interval_override_secs: Option<u32>,
+    /// Debug-only reminder style override (CI). Lives in memory, never saved.
+    #[serde(skip)]
+    pub style_override: Option<ReminderStyle>,
+    /// The drop was clicked open into the popup (CAP-16). Only meaningful
+    /// while Prompting; reset when Prompting starts. Never saved.
+    #[serde(skip)]
+    pub expanded: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +121,8 @@ impl State {
             drinks: Vec::new(),
             history: BTreeMap::new(),
             interval_override_secs: None,
+            style_override: None,
+            expanded: false,
         };
         s.next_due_at += s.interval();
         s
@@ -113,6 +138,36 @@ impl State {
             // A 0 from a hand-edited file would prompt nonstop.
             None => Duration::minutes(self.settings.interval_min.max(1).into()),
         }
+    }
+
+    /// The style in effect: the debug override if set, else the setting.
+    pub fn reminder_style(&self) -> ReminderStyle {
+        self.style_override.unwrap_or(self.settings.reminder_style)
+    }
+
+    /// Whether `self` and `other` would write the same `state.json`. Ignores
+    /// the memory-only fields, so e.g. opening the drop never saves. Lists
+    /// every field, so a new one can't be forgotten.
+    pub fn same_on_disk(&self, other: &State) -> bool {
+        let State {
+            settings,
+            phase,
+            next_due_at,
+            popup_shown_at,
+            day,
+            drinks,
+            history,
+            interval_override_secs: _,
+            style_override: _,
+            expanded: _,
+        } = self;
+        *settings == other.settings
+            && *phase == other.phase
+            && *next_due_at == other.next_due_at
+            && *popup_shown_at == other.popup_shown_at
+            && *day == other.day
+            && *drinks == other.drinks
+            && *history == other.history
     }
 
     pub fn snooze(&self) -> Duration {
@@ -159,7 +214,25 @@ pub fn on_load(mut state: State) -> State {
         state.phase = Phase::Waiting;
         state.popup_shown_at = None;
     }
+    state.expanded = false;
     state
+}
+
+/// A click on the drop (CAP-16): show the popup instead, still Prompting, so
+/// the timeout keeps counting from when the drop appeared. A stale click (the
+/// reminder was already answered) changes nothing.
+pub fn expand(mut s: State) -> State {
+    if s.phase == Phase::Prompting {
+        s.expanded = true;
+    }
+    s
+}
+
+/// Settings "Reminder style" (CAP-16). Applies at once, also to a reminder
+/// on screen; an opened drop stays open.
+pub fn set_reminder_style(mut s: State, style: ReminderStyle) -> State {
+    s.settings.reminder_style = style;
+    s
 }
 
 /// Tray "Log a drink" (CAP-4). With the popup open it counts as Drank and
@@ -260,6 +333,7 @@ pub fn tick<Tz: TimeZone>(now: DateTime<Tz>, mut s: State) -> (State, Action) {
     if s.phase != Phase::Prompting && now >= s.next_due_at {
         s.phase = Phase::Prompting;
         s.popup_shown_at = Some(now);
+        s.expanded = false;
         return (s, Action::ShowPopup);
     }
 
@@ -832,5 +906,92 @@ mod tests {
             );
             assert_eq!(ok.settings.snooze_min, 10);
         }
+    }
+
+    // ---- Story 6: small drop (CAP-16) ----
+
+    #[test]
+    fn expand_keeps_prompting_and_the_timeout_start() {
+        let mut s = prompting(0); // drop at 9:45
+        s.settings.popup_timeout_min = Some(2);
+        let (s, _) = tick(at(2026, 6, 1, 9, 46), s);
+        let s = expand(s);
+        assert!(s.expanded);
+        assert_eq!(s.phase, Phase::Prompting);
+        assert_eq!(s.popup_shown_at, Some(utc(at(2026, 6, 1, 9, 45))));
+        let (_, a) = tick(at(2026, 6, 1, 9, 46) + Duration::seconds(59), s.clone());
+        assert_eq!(a, Action::None);
+        let (s, a) = tick(at(2026, 6, 1, 9, 47), s);
+        assert_eq!(a, Action::TimedOut);
+        assert_eq!(s.phase, Phase::Waiting);
+    }
+
+    #[test]
+    fn stale_expand_changes_nothing() {
+        let s = answer(at(2026, 6, 1, 9, 46), prompting(0), Answer::Drank);
+        assert_eq!(expand(s.clone()), s);
+    }
+
+    #[test]
+    fn next_reminder_after_an_expand_starts_closed() {
+        let s = expand(prompting(0));
+        let s = answer(at(2026, 6, 1, 9, 46), s, Answer::Drank); // due 10:31
+        let (s, a) = tick(at(2026, 6, 1, 10, 31), s);
+        assert_eq!(a, Action::ShowPopup);
+        assert!(!s.expanded);
+    }
+
+    #[test]
+    fn on_load_clears_expanded() {
+        let s = on_load(expand(prompting(0)));
+        assert_eq!(s.phase, Phase::Waiting);
+        assert!(!s.expanded);
+    }
+
+    #[test]
+    fn old_file_loads_with_popup_style() {
+        let mut v = serde_json::to_value(State::new(at(2026, 6, 1, 9, 0))).unwrap();
+        v["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("reminder_style");
+        let s: State = serde_json::from_value(v).unwrap();
+        assert_eq!(s.settings.reminder_style, ReminderStyle::Popup);
+    }
+
+    #[test]
+    fn unknown_style_loads_as_popup_and_keeps_the_rest() {
+        let s = with_drinks(State::new(at(2026, 6, 1, 9, 0)), 2);
+        let mut v = serde_json::to_value(&s).unwrap();
+        v["settings"]["reminder_style"] = "sparkle".into();
+        let loaded: State = serde_json::from_value(v).unwrap();
+        assert_eq!(loaded.settings.reminder_style, ReminderStyle::Popup);
+        assert_eq!(loaded.count(), 2);
+    }
+
+    #[test]
+    fn style_is_saved_but_expanded_and_override_are_not() {
+        let mut s = set_reminder_style(State::new(at(2026, 6, 1, 9, 0)), ReminderStyle::Drop);
+        s.expanded = true;
+        s.style_override = Some(ReminderStyle::Popup);
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains(r#""reminder_style":"drop""#), "{json}");
+        assert!(!json.contains("expanded") && !json.contains("style_override"));
+        assert_eq!(s.reminder_style(), ReminderStyle::Popup);
+        s.style_override = None;
+        assert_eq!(s.reminder_style(), ReminderStyle::Drop);
+    }
+
+    #[test]
+    fn same_on_disk_ignores_memory_only_fields() {
+        let s = prompting(0);
+        let mut m = expand(s.clone());
+        m.style_override = Some(ReminderStyle::Drop);
+        m.interval_override_secs = Some(5);
+        assert!(s.same_on_disk(&m));
+        let styled = set_reminder_style(s.clone(), ReminderStyle::Drop);
+        assert!(!s.same_on_disk(&styled));
+        let answered = answer(at(2026, 6, 1, 9, 46), s.clone(), Answer::Drank);
+        assert!(!s.same_on_disk(&answered));
     }
 }

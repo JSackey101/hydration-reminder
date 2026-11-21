@@ -20,6 +20,13 @@
         <input id="timeout" type="number" min="1" max="60" step="1" aria-label="Popup timeout in minutes" disabled />
         <span>min</span>
       </div>
+      <div class="row" role="radiogroup" aria-labelledby="style-name">
+        <span id="style-name">Reminder style</span>
+        <input id="style-popup" name="style" type="radio" value="popup" disabled />
+        <label for="style-popup">Popup</label>
+        <input id="style-drop" name="style" type="radio" value="drop" disabled />
+        <label for="style-drop">Small drop</label>
+      </div>
       <div class="row">
         <input id="login" type="checkbox" disabled />
         <label for="login">Start at login</label>

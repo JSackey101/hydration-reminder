@@ -130,7 +130,7 @@ fn key_name(code: &str) -> String {
 
 /// Sends the popup its key hints.
 pub fn send_labels<R: Runtime>(app: &AppHandle<R>, labels: &Labels) {
-    if let Err(e) = app.emit_to(crate::popup::LABEL, LABELS_EVENT, labels) {
+    if let Err(e) = app.emit_to(crate::popup::POPUP.label, LABELS_EVENT, labels) {
         log::warn!("shortcut labels not sent: {e}");
     }
 }

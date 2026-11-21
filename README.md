@@ -49,6 +49,10 @@ macOS may also show an **"App Background Activity"** notice. That's macOS tellin
 - **The reminder:** when a drink is due, a small window appears in the corner of the screen. Press **Drank** after
   a few good mouthfuls, or **Snooze 10 min** if now isn't a good time. The next reminder comes one interval after
   you press Drank.
+- **Small drop:** prefer something quieter? Set **Reminder style** to **Small drop** in Settings. A due reminder then
+  shows just a small 💧 bubble in the same corner, which pulses once and never takes your typing. Click it to open the
+  usual reminder, or answer it straight away with the keyboard shortcuts. The auto-close timeout counts from when the
+  drop appeared.
 - **Keyboard shortcuts:** while a reminder is showing, press **⌃⌥D** (Ctrl+Alt+D on Windows) for Drank or **⌃⌥S**
   (Ctrl+Alt+S) for Snooze, from any app. You keep typing where you were. The popup shows the keys under its
   buttons. The shortcuts only work while a reminder is showing; the rest of the time the keys go to your other apps
@@ -64,6 +68,8 @@ macOS may also show an **"App Background Activity"** notice. That's macOS tellin
   - **Remind me every:** 1–240 minutes. The default is 45.
   - **Close an unanswered popup after:** optional. With it on, a reminder you ignore closes itself after that many
     minutes.
+  - **Reminder style:** **Popup** (the default) or **Small drop**. A change applies at once, even to a reminder on
+    screen.
   - **Start at login:** on by default, so the app is there every time you sign in.
   - **Shortcuts:** press **Record** next to Drank or Snooze, then the new key combination (Esc cancels). It needs Ctrl
     or ⌘ on macOS (Ctrl or the Windows key on Windows), and Drank and Snooze must differ. You can't record while a reminder is showing;
@@ -129,6 +135,7 @@ The spec lives in `_bmad-output/specs/spec-hydration-reminder/`.
 npm install
 npm run tauri dev                              # run the app
 HYDRATION_INTERVAL_SECS=10 npm run tauri dev   # debug: remind every 10 s
+HYDRATION_REMINDER_STYLE=drop npm run tauri dev # debug: use the small drop (not saved)
 cd src-tauri && cargo test                     # scheduler, persistence and badge tests
 ```
 

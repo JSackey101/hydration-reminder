@@ -1,12 +1,37 @@
-//! The reminder popup (CAP-2, CAP-3): a small always-on-top window that never
-//! takes keyboard focus. Built once, hidden, at startup; shown next to the tray
-//! on the display holding the cursor.
+//! The reminder windows: the popup (CAP-2, CAP-3) and the small drop
+//! (CAP-16). Both are small always-on-top windows that never take keyboard
+//! focus, built once, hidden, at startup, and shown in the same corner next to
+//! the tray on the display holding the cursor.
 
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
-pub const LABEL: &str = "popup";
-/// Logical size of the popup.
-const SIZE: (f64, f64) = (340.0, 168.0);
+/// One reminder window.
+pub struct Win {
+    pub label: &'static str,
+    page: &'static str,
+    /// Distinct per window: the Windows CI test finds them by title.
+    title: &'static str,
+    /// Logical size.
+    size: (f64, f64),
+    /// A see-through window with no shadow, for the round drop.
+    transparent: bool,
+}
+
+pub const POPUP: Win = Win {
+    label: "popup",
+    page: "popup.html",
+    title: "Hydration Reminder",
+    size: (340.0, 168.0),
+    transparent: false,
+};
+
+pub const DROP: Win = Win {
+    label: "drop",
+    page: "drop.html",
+    title: "Hydration Reminder Drop",
+    size: (56.0, 56.0),
+    transparent: true,
+};
 /// Logical gap between the popup and the work-area edge.
 const MARGIN: f64 = 12.0;
 
@@ -42,10 +67,19 @@ pub fn popup_position(
     (x.round() as i32, y.round() as i32)
 }
 
+/// Builds both windows, hidden. Call once, on the main thread (setup).
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let _win = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("popup.html".into()))
-        .title("Hydration Reminder")
-        .inner_size(SIZE.0, SIZE.1)
+    build_one(app, &POPUP)?;
+    build_one(app, &DROP)?;
+    #[cfg(target_os = "macos")]
+    mac::watch_frontmost();
+    Ok(())
+}
+
+fn build_one<R: Runtime>(app: &AppHandle<R>, w: &Win) -> tauri::Result<()> {
+    let _win = WebviewWindowBuilder::new(app, w.label, WebviewUrl::App(w.page.into()))
+        .title(w.title)
+        .inner_size(w.size.0, w.size.1)
         .resizable(false)
         .maximizable(false)
         .minimizable(false)
@@ -59,23 +93,23 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         // The first click on the inactive popup presses the button.
         .accept_first_mouse(true)
         .visible_on_all_workspaces(true)
+        // Needs the `macos-private-api` feature and `app.macOSPrivateApi`.
+        .transparent(w.transparent)
+        .shadow(!w.transparent)
         .build()?;
     #[cfg(target_os = "macos")]
-    {
-        mac::show_over_full_screen(&_win);
-        mac::watch_frontmost();
-    }
+    mac::show_over_full_screen(&_win);
     Ok(())
 }
 
-/// Shows the popup without activating the app. Call on the main thread.
-pub fn show<R: Runtime>(app: &AppHandle<R>) {
-    let Some(win) = app.get_webview_window(LABEL) else {
-        log::warn!("popup window missing");
+/// Shows a reminder window without activating the app. Call on the main thread.
+pub fn show<R: Runtime>(app: &AppHandle<R>, w: &Win) {
+    let Some(win) = app.get_webview_window(w.label) else {
+        log::warn!("{} window missing", w.label);
         return;
     };
-    if let Err(e) = place(app, &win) {
-        log::warn!("popup placement failed: {e}");
+    if let Err(e) = place(app, &win, w.size) {
+        log::warn!("{} placement failed: {e}", w.label);
     }
     let shown = {
         #[cfg(windows)]
@@ -88,13 +122,13 @@ pub fn show<R: Runtime>(app: &AppHandle<R>) {
         }
     };
     if let Err(e) = shown {
-        log::warn!("popup show failed: {e}");
+        log::warn!("{} show failed: {e}", w.label);
     }
 }
 
-/// Hides the popup. Call on the main thread.
-pub fn hide<R: Runtime>(app: &AppHandle<R>) {
-    let Some(win) = app.get_webview_window(LABEL) else {
+/// Hides a reminder window. Call on the main thread.
+pub fn hide<R: Runtime>(app: &AppHandle<R>, w: &Win) {
+    let Some(win) = app.get_webview_window(w.label) else {
         return;
     };
     let hidden = {
@@ -108,18 +142,22 @@ pub fn hide<R: Runtime>(app: &AppHandle<R>) {
         }
     };
     if let Err(e) = hidden {
-        log::warn!("popup hide failed: {e}");
+        log::warn!("{} hide failed: {e}", w.label);
     }
 }
 
-/// After a button press: if the click activated our app, give focus back to
-/// the app the user was in. Call on the main thread.
+/// After a click on the popup or the drop: if the click activated our app,
+/// give focus back to the app the user was in. Call on the main thread.
 pub fn restore_focus() {
     #[cfg(target_os = "macos")]
     mac::restore_frontmost();
 }
 
-fn place<R: Runtime>(app: &AppHandle<R>, win: &tauri::WebviewWindow<R>) -> tauri::Result<()> {
+fn place<R: Runtime>(
+    app: &AppHandle<R>,
+    win: &tauri::WebviewWindow<R>,
+    size: (f64, f64),
+) -> tauri::Result<()> {
     // The cursor's display; any failure falls back to the primary display.
     let under_cursor = app
         .cursor_position()
@@ -136,7 +174,7 @@ fn place<R: Runtime>(app: &AppHandle<R>, win: &tauri::WebviewWindow<R>) -> tauri
     let (x, y) = popup_position(
         (area.position.x, area.position.y),
         (area.size.width, area.size.height),
-        SIZE,
+        size,
         monitor.scale_factor(),
         CORNER,
     );
@@ -220,11 +258,12 @@ mod mac {
 
     static PREVIOUS: Mutex<Option<i32>> = Mutex::new(None);
 
-    /// "All Spaces" alone doesn't cover another app's full-screen Space; the
-    /// popup also needs to be a full-screen auxiliary window. Main thread only.
+    /// "All Spaces" alone doesn't cover another app's full-screen Space; a
+    /// reminder window also needs to be a full-screen auxiliary window. Main
+    /// thread only.
     pub fn show_over_full_screen<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>) {
         let Ok(ptr) = win.ns_window() else {
-            log::warn!("no NSWindow for the popup");
+            log::warn!("no NSWindow for a reminder window");
             return;
         };
         // SAFETY: Tauri returns the live NSWindow of this window, and we're on
@@ -283,21 +322,27 @@ mod tests {
     #[test]
     fn top_right_sits_under_the_menu_bar() {
         // 1512x949 work area starting below a 33 px menu bar, Retina scale 2.
-        let (x, y) = popup_position((0, 66), (3024, 1898), SIZE, 2.0, Corner::TopRight);
+        let (x, y) = popup_position((0, 66), (3024, 1898), POPUP.size, 2.0, Corner::TopRight);
         assert_eq!((x, y), (3024 - 680 - 24, 66 + 24));
     }
 
     #[test]
     fn bottom_right_sits_above_the_taskbar() {
         // 1920x1080 display with a 48 px taskbar, scale 1.
-        let (x, y) = popup_position((0, 0), (1920, 1032), SIZE, 1.0, Corner::BottomRight);
+        let (x, y) = popup_position((0, 0), (1920, 1032), POPUP.size, 1.0, Corner::BottomRight);
         assert_eq!((x, y), (1920 - 340 - 12, 1032 - 168 - 12));
     }
 
     #[test]
     fn second_monitor_offset_is_respected() {
         // Secondary display to the left of the primary, scale 1.5.
-        let (x, y) = popup_position((-2560, 0), (2560, 1392), SIZE, 1.5, Corner::BottomRight);
+        let (x, y) = popup_position(
+            (-2560, 0),
+            (2560, 1392),
+            POPUP.size,
+            1.5,
+            Corner::BottomRight,
+        );
         assert_eq!((x, y), (-2560 + 2560 - 510 - 18, 1392 - 252 - 18));
     }
 }

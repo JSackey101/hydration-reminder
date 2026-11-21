@@ -12,12 +12,19 @@ type Settings = {
   drankLabel: string;
   snoozeLabel: string;
   reminderShowing: boolean;
+  reminderStyle: Style;
 };
+
+// How a due reminder shows (CAP-16).
+type Style = "popup" | "drop";
 
 const interval = document.getElementById("interval") as HTMLInputElement;
 const timeoutOn = document.getElementById("timeout-on") as HTMLInputElement;
 const timeout = document.getElementById("timeout") as HTMLInputElement;
 const login = document.getElementById("login") as HTMLInputElement;
+const styleInputs = Array.from(
+  document.querySelectorAll<HTMLInputElement>('input[name="style"]'),
+);
 const status = document.getElementById("status") as HTMLParagraphElement;
 
 const DEFAULT_TIMEOUT_MIN = 2;
@@ -51,6 +58,23 @@ async function save() {
     await invoke("save_settings", { intervalMin, popupTimeoutMin });
     show("Saved.", false);
   } catch (e) {
+    show(String(e), true);
+  }
+}
+
+// Sent on its own, like launch at login: it has nothing to validate. On a
+// failed call the radios go back to the style Rust still has.
+let savedStyle: Style = "popup";
+function checkStyle(style: Style) {
+  for (const input of styleInputs) input.checked = input.value === style;
+}
+async function saveStyle(style: Style) {
+  try {
+    await invoke("save_reminder_style", { style });
+    savedStyle = style;
+    show("Saved.", false);
+  } catch (e) {
+    checkStyle(savedStyle);
     show(String(e), true);
   }
 }
@@ -210,6 +234,9 @@ async function load() {
   interval.value = String(s.intervalMin);
   timeoutOn.checked = s.popupTimeoutMin !== null;
   timeout.value = String(s.popupTimeoutMin ?? DEFAULT_TIMEOUT_MIN);
+  savedStyle = s.reminderStyle;
+  checkStyle(savedStyle);
+  for (const input of styleInputs) input.disabled = false;
   // The inputs start disabled, so nothing can be sent before (or without) a
   // successful load.
   interval.disabled = false;
@@ -239,6 +266,11 @@ async function saveLogin() {
 }
 
 login.addEventListener("change", saveLogin);
+for (const input of styleInputs) {
+  input.addEventListener("change", () => {
+    if (input.checked) saveStyle(input.value as Style);
+  });
+}
 interval.addEventListener("change", save);
 timeout.addEventListener("change", save);
 timeoutOn.addEventListener("change", () => {
