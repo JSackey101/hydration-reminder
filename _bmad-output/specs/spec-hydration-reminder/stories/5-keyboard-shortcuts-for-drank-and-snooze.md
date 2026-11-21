@@ -164,6 +164,10 @@ context:
 | B10 | Blind | Hints reach the popup after it's visible | low | Emitted after `popup::show` | patch: send labels before show |
 | B11 | Blind | Text: README wording, `apply` doc wrap, ps1 header length, Check detail argument | low | Confirmed at each site | patch |
 
+## Sourcery review on PR #28
+
+Not run: the weekly Sourcery budget (250k diff characters) was used up, and it posted only its reviewer's guide, with no line comments. On 2026-11-21 the user chose to merge without waiting about 17 h for the budget to reset. CI passed: 23/23 Windows popup checks (including the Ctrl+Alt+D shortcut), both release builds, and GitGuardian.
+
 ## Verification
 
 **Commands:**
