@@ -80,6 +80,9 @@ fn build_one<R: Runtime>(app: &AppHandle<R>, w: &Win) -> tauri::Result<()> {
     let _win = WebviewWindowBuilder::new(app, w.label, WebviewUrl::App(w.page.into()))
         .title(w.title)
         .inner_size(w.size.0, w.size.1)
+        // Windows otherwise clamps a window to the system minimum tracking
+        // width (about 136 px), which made the 56 px drop 136 px wide.
+        .min_inner_size(w.size.0, w.size.1)
         .resizable(false)
         .maximizable(false)
         .minimizable(false)
@@ -97,6 +100,8 @@ fn build_one<R: Runtime>(app: &AppHandle<R>, w: &Win) -> tauri::Result<()> {
         .transparent(w.transparent)
         .shadow(!w.transparent)
         .build()?;
+    // In case creation clamped it before the minimum applied.
+    _win.set_size(tauri::LogicalSize::new(w.size.0, w.size.1))?;
     #[cfg(target_os = "macos")]
     mac::show_over_full_screen(&_win);
     Ok(())

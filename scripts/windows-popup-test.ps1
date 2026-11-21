@@ -76,6 +76,9 @@ function Shot([string]$name, $crop = $null, [int]$zoom = 1) {
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
     if ($crop) {
+        # Keep the crop on screen: a window partly off screen mustn't crash the test.
+        $crop = [System.Drawing.Rectangle]::Intersect($crop, (New-Object System.Drawing.Rectangle 0, 0, $bmp.Width, $bmp.Height))
+        if ($crop.Width -le 0 -or $crop.Height -le 0) { $bmp.Save((Join-Path $Out "$name.png")); $g.Dispose(); $bmp.Dispose(); return }
         $part = $bmp.Clone($crop, $bmp.PixelFormat)
         $big = New-Object System.Drawing.Bitmap ($crop.Width * $zoom), ($crop.Height * $zoom)
         $gb = [System.Drawing.Graphics]::FromImage($big)

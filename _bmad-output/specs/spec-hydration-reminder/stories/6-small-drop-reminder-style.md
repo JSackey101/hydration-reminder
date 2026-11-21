@@ -162,6 +162,12 @@ context:
     - A freshly launched debug app took focus. That's tao's activate-on-launch, the same for the popup and not caused by the drop. A drop that showed later never took focus.
     - Once, the first drop after TextEdit entered full screen appeared about 1.5 s late. It didn't happen again in 2 more full-screen cycles, so it's likely the Space transition.
 
+- **CI on PR #29, first Windows drop run.**
+  - The drop's content was 136×56 px, not 56×56, and 68 px off the right edge. Windows clamps a window to the system minimum tracking width unless tao reports a minimum. Fix: `min_inner_size` equal to the size for both reminder windows, plus a `set_size` after the build.
+  - The screenshot crop of the off-screen part crashed the script. `Shot` now clamps crops to the screen.
+  - Everything before those checks passed: the drop appears, focus stays in Notepad, no-activate and topmost are set, and the popup stays hidden.
+- **Sourcery:** the PR was merged without a Sourcery review, at the user's request (weekly budget used up).
+
 ## Spec Change Log
 
 ## Review Triage Log
