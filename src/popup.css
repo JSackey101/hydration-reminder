@@ -43,6 +43,22 @@ p {
   gap: 8px;
 }
 
+.action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+/* The shortcut hint under each button (CAP-15). */
+kbd {
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  min-height: 16px;
+  color: var(--muted);
+}
+
 button {
   font: inherit;
   font-weight: 500;

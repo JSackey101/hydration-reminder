@@ -49,6 +49,10 @@ macOS may also show an **"App Background Activity"** notice. That's macOS tellin
 - **The reminder:** when a drink is due, a small window appears in the corner of the screen. Press **Drank** after
   a few good mouthfuls, or **Snooze 10 min** if now isn't a good time. The next reminder comes one interval after
   you press Drank.
+- **Keyboard shortcuts:** while a reminder is showing, press **⌃⌥D** (Ctrl+Alt+D on Windows) for Drank or **⌃⌥S**
+  (Ctrl+Alt+S) for Snooze, from any app. You keep typing where you were. The popup shows the keys under its
+  buttons. The shortcuts only work while a reminder is showing; the rest of the time the keys go to your other apps
+  as usual.
 - **The count:** the number on the drop is how many drinks you've had today. It resets at midnight. On Windows the
   drop turns red when a drink is due.
 - **The menu:** click the drop for:
@@ -61,6 +65,18 @@ macOS may also show an **"App Background Activity"** notice. That's macOS tellin
   - **Close an unanswered popup after:** optional. With it on, a reminder you ignore closes itself after that many
     minutes.
   - **Start at login:** on by default, so the app is there every time you sign in.
+  - **Shortcuts:** press **Record** next to Drank or Snooze, then the new key combination (Esc cancels). It needs Ctrl
+    or ⌘ on macOS (Ctrl or the Windows key on Windows), and Drank and Snooze must differ. You can't record while a reminder is showing;
+    answer it first.
+
+Shortcut notes:
+
+- **Windows, some keyboard layouts:** Ctrl+Alt works like AltGr, so on layouts where AltGr+D or AltGr+S types a
+  character, the default shortcut takes that key away while a reminder shows. Record a different one if that gets in
+  your way.
+- **Another app using the same combination:** on Windows, Settings tells you it can't be registered; pick another.
+  On macOS there's no error: the other app gets the key press instead. If a shortcut does nothing, record a different
+  one.
 
 Your count and settings are kept on your computer only. Nothing is sent anywhere, and there's no account.
 

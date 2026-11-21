@@ -3,6 +3,7 @@ mod persist;
 mod popup;
 mod scheduler;
 mod settings;
+mod shortcuts;
 mod tray;
 
 use chrono::Local;
@@ -10,11 +11,16 @@ use scheduler::{Action, Answer, Phase, Settings, State};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_global_shortcut::Shortcut;
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
 const TICK: Duration = Duration::from_secs(1);
+
+/// Tells the settings window whether a reminder is on screen, so it can
+/// disable recording shortcuts.
+const REMINDER_SHOWING_EVENT: &str = "reminder-showing";
 
 /// Debug builds only: `HYDRATION_INTERVAL_SECS` shortens the interval for
 /// testing. Held in memory, never saved.
@@ -36,6 +42,11 @@ struct Inner<R: Runtime> {
     saved: Option<State>,
     path: PathBuf,
     tray: tray::Tray<R>,
+}
+
+/// The shortcuts in use: the stored ones, or the defaults if they're invalid.
+fn current_shortcuts(s: &Settings) -> (Shortcut, Shortcut) {
+    shortcuts::stored_or_defaults(&s.drank_shortcut, &s.snooze_shortcut)
 }
 
 fn tray_view(s: &State) -> (u32, bool) {
@@ -77,15 +88,17 @@ impl<R: Runtime> Inner<R> {
 }
 
 /// The single path for every state change. Effects follow the phase change,
-/// not the action: entering Prompting shows the popup, leaving it hides it.
+/// not the action: entering Prompting shows the popup and registers the
+/// shortcuts, leaving it hides the popup and releases them.
 ///
 /// The lock is held while effects are issued so they keep their order. Popup
 /// calls go through `run_on_main_thread`: queued from other threads, but run
 /// inline when `apply` is already on the main thread (setup). So `popup::show`
-/// and `popup::hide` must never take the `Core` lock. Outside setup the main
-/// thread never takes it: commands are async, so they run off the main thread,
-/// and the tray menu hands Log and Undo to a worker thread. This matters
-/// because tray updates wait for the main thread while the lock is held.
+/// and `popup::hide` (and `shortcuts::register` / `release`) must never take
+/// the `Core` lock. Outside setup the main thread never takes it: commands are
+/// async, so they run off the main thread, and the tray menu hands Log and
+/// Undo to a worker thread. This matters because tray updates wait for the
+/// main thread while the lock is held.
 fn apply<R: Runtime>(app: &AppHandle<R>, f: impl FnOnce(State) -> (State, Action)) {
     let core = app.state::<Core<R>>();
     let mut g = core.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -100,11 +113,24 @@ fn apply<R: Runtime>(app: &AppHandle<R>, f: impl FnOnce(State) -> (State, Action
     }
     if let Some(is) = fx.popup {
         let handle = app.clone();
+        let (drank, snooze) = current_shortcuts(&g.state.settings);
         let queued = app.run_on_main_thread(move || {
             if is {
-                popup::show(&handle)
+                // Hints first, so the popup never shows stale ones; then again
+                // without any combo that failed to register.
+                let labels = shortcuts::Labels::new(&drank, &snooze);
+                shortcuts::send_labels(&handle, &labels);
+                popup::show(&handle);
+                let live = shortcuts::register(&handle, drank, snooze);
+                if live != labels {
+                    shortcuts::send_labels(&handle, &live);
+                }
             } else {
-                popup::hide(&handle)
+                popup::hide(&handle);
+                shortcuts::release(&handle);
+            }
+            if let Err(e) = handle.emit_to(settings::LABEL, REMINDER_SHOWING_EVENT, is) {
+                log::warn!("reminder state not sent to settings: {e}");
             }
         });
         if let Err(e) = queued {
@@ -120,16 +146,35 @@ fn apply<R: Runtime>(app: &AppHandle<R>, f: impl FnOnce(State) -> (State, Action
     }
 }
 
-fn answer_popup<R: Runtime>(app: &AppHandle<R>, answer: Answer) {
-    log::info!("answer: {answer:?}");
-    // Tick first, so a press just after midnight lands on the new day.
+/// Tick first, so a press just after midnight lands on the new day. `answer`
+/// is a no-op unless still Prompting, so a press racing a click, a timeout or
+/// a tray Log changes nothing. Returns whether it answered a reminder.
+fn answer_reminder<R: Runtime>(app: &AppHandle<R>, answer: Answer) -> bool {
+    let mut answered = false;
     apply(app, |s| {
         let now = Local::now();
         let (s, action) = scheduler::tick(now, s);
+        answered = s.phase == Phase::Prompting;
         (scheduler::answer(now, s, answer), action)
     });
+    answered
+}
+
+fn answer_popup<R: Runtime>(app: &AppHandle<R>, answer: Answer) {
+    log::info!("answer: {answer:?}");
+    answer_reminder(app, answer);
     if let Err(e) = app.run_on_main_thread(popup::restore_focus) {
         log::warn!("focus restore failed: {e}");
+    }
+}
+
+/// A global shortcut (CAP-15), run off the main thread. Focus never left the
+/// app in use, so unlike a click there's nothing to restore.
+pub(crate) fn answer_by_shortcut<R: Runtime>(app: &AppHandle<R>, answer: Answer) {
+    if answer_reminder(app, answer) {
+        log::info!("answer by shortcut: {answer:?}");
+    } else {
+        log::info!("shortcut {answer:?} ignored: no reminder showing");
     }
 }
 
@@ -163,13 +208,25 @@ pub(crate) fn tray_undo<R: Runtime>(app: &AppHandle<R>) {
 struct SettingsView {
     interval_min: u32,
     popup_timeout_min: Option<u32>,
+    drank_shortcut: String,
+    snooze_shortcut: String,
+    drank_label: String,
+    snooze_label: String,
+    reminder_showing: bool,
 }
 
-impl From<&Settings> for SettingsView {
-    fn from(s: &Settings) -> Self {
+impl From<&State> for SettingsView {
+    fn from(s: &State) -> Self {
+        let (drank, snooze) = current_shortcuts(&s.settings);
+        let labels = shortcuts::Labels::new(&drank, &snooze);
         Self {
-            interval_min: s.interval_min,
-            popup_timeout_min: s.popup_timeout_min,
+            interval_min: s.settings.interval_min,
+            popup_timeout_min: s.settings.popup_timeout_min,
+            drank_shortcut: drank.into_string(),
+            snooze_shortcut: snooze.into_string(),
+            drank_label: labels.drank,
+            snooze_label: labels.snooze,
+            reminder_showing: s.phase == Phase::Prompting,
         }
     }
 }
@@ -178,7 +235,16 @@ impl From<&Settings> for SettingsView {
 async fn get_settings(app: AppHandle) -> SettingsView {
     let core = app.state::<Core<tauri::Wry>>();
     let g = core.0.lock().unwrap_or_else(|e| e.into_inner());
-    SettingsView::from(&g.state.settings)
+    SettingsView::from(&g.state)
+}
+
+/// For the popup when it loads; later changes arrive as `shortcut-labels`.
+#[tauri::command]
+async fn get_shortcut_labels(app: AppHandle) -> shortcuts::Labels {
+    let core = app.state::<Core<tauri::Wry>>();
+    let g = core.0.lock().unwrap_or_else(|e| e.into_inner());
+    let (drank, snooze) = current_shortcuts(&g.state.settings);
+    shortcuts::Labels::new(&drank, &snooze)
 }
 
 /// The settings page's values applied to the state. Takes i64 so a negative
@@ -217,6 +283,68 @@ async fn save_settings(
     });
     if result.is_ok() {
         log::info!("settings: interval {interval_min} min, timeout {popup_timeout_min:?}");
+    }
+    result
+}
+
+/// Recorded shortcuts applied to the state: refused while a reminder shows,
+/// then validated, then each changed one test-registered with `try_register`
+/// (an unchanged one that has since been taken mustn't block fixing the
+/// other). On error the state is returned unchanged.
+fn change_shortcuts(
+    s: State,
+    drank: &str,
+    snooze: &str,
+    mut try_register: impl FnMut(Shortcut) -> Result<(), String>,
+) -> (State, Result<(), String>) {
+    if s.phase == Phase::Prompting {
+        return (s, Err("Answer the reminder first.".into()));
+    }
+    let (drank, snooze) = match shortcuts::validate(drank, snooze) {
+        Ok(v) => v,
+        Err(e) => return (s, Err(e)),
+    };
+    let old = (
+        s.settings.drank_shortcut.clone(),
+        s.settings.snooze_shortcut.clone(),
+    );
+    for (what, combo, old) in [("Drank", &drank, &old.0), ("Snooze", &snooze, &old.1)] {
+        if combo == old {
+            continue;
+        }
+        let sc: Shortcut = combo.parse().expect("validated shortcut parses");
+        if let Err(e) = try_register(sc) {
+            log::warn!("{what} shortcut {combo} can't be registered: {e}");
+            let label = shortcuts::label(&sc, cfg!(target_os = "macos"));
+            return (
+                s,
+                Err(format!(
+                    "{what}: {label} can't be registered; another app may be using it."
+                )),
+            );
+        }
+    }
+    let mut next = s;
+    next.settings.drank_shortcut = drank;
+    next.settings.snooze_shortcut = snooze;
+    (next, Ok(()))
+}
+
+/// Runs inside `apply`, so the Prompting check and the save happen under one
+/// lock and no reminder can appear in between. The test registration waits on
+/// the main thread, which never takes the lock (see `apply`).
+#[tauri::command]
+async fn save_shortcuts(app: AppHandle, drank: String, snooze: String) -> Result<(), String> {
+    let mut result = Ok(());
+    apply(&app, |s| {
+        let (next, r) =
+            change_shortcuts(s, &drank, &snooze, |sc| shortcuts::try_register(&app, sc));
+        result = r;
+        (next, Action::None)
+    });
+    match &result {
+        Ok(()) => log::info!("settings: shortcuts {drank} / {snooze}"),
+        Err(e) => log::info!("shortcuts refused: {e}"),
     }
     result
 }
@@ -375,11 +503,16 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
+        // No global handler: each shortcut gets its own, registered only
+        // while a reminder shows (see `shortcuts`).
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             drank,
             snooze,
             get_settings,
             save_settings,
+            save_shortcuts,
+            get_shortcut_labels,
             get_launch_at_login,
             set_launch_at_login
         ])
@@ -400,6 +533,7 @@ pub fn run() {
 
             let tray = tray::Tray::build(app.handle())?;
             popup::build(app.handle())?;
+            app.manage(shortcuts::Registered::default());
             app.manage(Core(Mutex::new(Inner {
                 state,
                 saved: None,
@@ -542,16 +676,90 @@ mod tests {
 
     #[test]
     fn settings_view_uses_the_page_field_names() {
-        let mut s = Settings::default();
+        let mut s = waiting();
+        let (drank_label, snooze_label) = if cfg!(target_os = "macos") {
+            ("⌃⌥D", "⌃⌥S")
+        } else {
+            ("Ctrl+Alt+D", "Ctrl+Alt+S")
+        };
         assert_eq!(
             serde_json::to_value(SettingsView::from(&s)).unwrap(),
-            serde_json::json!({ "intervalMin": 45, "popupTimeoutMin": null })
+            serde_json::json!({
+                "intervalMin": 45,
+                "popupTimeoutMin": null,
+                "drankShortcut": "control+alt+KeyD",
+                "snoozeShortcut": "control+alt+KeyS",
+                "drankLabel": drank_label,
+                "snoozeLabel": snooze_label,
+                "reminderShowing": false,
+            })
         );
-        s.popup_timeout_min = Some(2);
+        s.settings.popup_timeout_min = Some(2);
         assert_eq!(
             serde_json::to_value(SettingsView::from(&s)).unwrap()["popupTimeoutMin"],
             2
         );
+        let p = prompting();
+        assert_eq!(
+            serde_json::to_value(SettingsView::from(&p)).unwrap()["reminderShowing"],
+            true
+        );
+    }
+
+    #[test]
+    fn settings_view_shows_defaults_for_an_unparsable_stored_shortcut() {
+        let mut s = waiting();
+        s.settings.drank_shortcut = "control+".into();
+        let v = serde_json::to_value(SettingsView::from(&s)).unwrap();
+        assert_eq!(v["drankShortcut"], "control+alt+KeyD");
+    }
+
+    #[test]
+    fn change_shortcuts_saves_canonical_combos_after_test_registering_the_changed_one() {
+        let mut tried = Vec::new();
+        let (s, r) = change_shortcuts(waiting(), "Alt+Ctrl+Shift+W", "control+alt+KeyS", |sc| {
+            tried.push(sc.into_string());
+            Ok(())
+        });
+        assert_eq!(r, Ok(()));
+        assert_eq!(s.settings.drank_shortcut, "shift+control+alt+KeyW");
+        assert_eq!(s.settings.snooze_shortcut, "control+alt+KeyS");
+        // Snooze is unchanged (the default), so only Drank is tried.
+        assert_eq!(tried, ["shift+control+alt+KeyW"]);
+    }
+
+    #[test]
+    fn change_shortcuts_refuses_during_a_reminder_without_registering() {
+        let (s, r) = change_shortcuts(prompting(), "control+KeyW", "control+KeyE", |_| {
+            panic!("must not register while a reminder shows")
+        });
+        assert_eq!(s, prompting());
+        assert_eq!(r, Err("Answer the reminder first.".into()));
+    }
+
+    #[test]
+    fn change_shortcuts_keeps_the_old_combos_when_refused() {
+        // Invalid: nothing is registered.
+        let (s, r) = change_shortcuts(waiting(), "KeyW", "control+KeyE", |_| {
+            panic!("must not register an invalid combo")
+        });
+        assert_eq!(s, waiting());
+        assert!(r.unwrap_err().contains("needs"));
+        // Can't register (another app owns it, Windows).
+        let (s, r) = change_shortcuts(waiting(), "control+KeyW", "control+KeyE", |sc| {
+            if sc.into_string() == "control+KeyE" {
+                Err("AlreadyRegistered".into())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(s, waiting());
+        let msg = r.unwrap_err();
+        assert!(
+            msg.starts_with("Snooze:") && msg.contains("can't be registered"),
+            "{msg}"
+        );
+        assert!(!msg.contains("AlreadyRegistered"), "raw error shown: {msg}");
     }
 
     #[test]

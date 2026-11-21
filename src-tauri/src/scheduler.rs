@@ -12,7 +12,14 @@ pub struct Settings {
     pub snooze_min: u32,
     /// `None` = the popup stays until answered (CAP-14 default).
     pub popup_timeout_min: Option<u32>,
+    /// Global shortcuts (CAP-15), stored in the plugin's canonical form. Not
+    /// checked here: an unparsable value falls back to its default on use.
+    pub drank_shortcut: String,
+    pub snooze_shortcut: String,
 }
+
+pub const DEFAULT_DRANK_SHORTCUT: &str = "control+alt+KeyD";
+pub const DEFAULT_SNOOZE_SHORTCUT: &str = "control+alt+KeyS";
 
 impl Default for Settings {
     fn default() -> Self {
@@ -20,6 +27,8 @@ impl Default for Settings {
             interval_min: 45,
             snooze_min: 10,
             popup_timeout_min: None,
+            drank_shortcut: DEFAULT_DRANK_SHORTCUT.into(),
+            snooze_shortcut: DEFAULT_SNOOZE_SHORTCUT.into(),
         }
     }
 }

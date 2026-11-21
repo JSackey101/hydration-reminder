@@ -16,7 +16,7 @@ pub fn open<R: Runtime>(app: &AppHandle<R>) {
             .and_then(|_| win.set_focus()),
         None => WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("settings.html".into()))
             .title("Hydration Reminder Settings")
-            .inner_size(420.0, 264.0)
+            .inner_size(420.0, 420.0)
             .resizable(false)
             .maximizable(false)
             .minimizable(false)
