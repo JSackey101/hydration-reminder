@@ -1,5 +1,6 @@
-//! The settings window (CAP-5, CAP-7, CAP-14): an ordinary window for the
-//! interval, the popup timeout and launch at login. Built when "Settings…" is
+//! The settings window (CAP-5, CAP-7, CAP-14, CAP-15, CAP-16): an ordinary
+//! window for the interval, the popup timeout, the reminder style, launch at
+//! login and the shortcuts. Built when "Settings…" is
 //! chosen and closed for real, so it costs nothing while it isn't open.
 
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
@@ -16,7 +17,7 @@ pub fn open<R: Runtime>(app: &AppHandle<R>) {
             .and_then(|_| win.set_focus()),
         None => WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("settings.html".into()))
             .title("Hydration Reminder Settings")
-            .inner_size(420.0, 420.0)
+            .inner_size(420.0, 460.0)
             .resizable(false)
             .maximizable(false)
             .minimizable(false)

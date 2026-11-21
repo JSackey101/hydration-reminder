@@ -28,7 +28,7 @@ jobs:
       - name: Every window's page is in the build
         shell: pwsh
         run: |
-          foreach ($page in "popup.html", "settings.html") {
+          foreach ($page in "popup.html", "drop.html", "settings.html") {
             if (-not (Test-Path "dist/$page")) { throw "dist/$page is missing" }
           }
       - name: Popup focus test

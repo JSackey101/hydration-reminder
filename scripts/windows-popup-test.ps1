@@ -1,7 +1,8 @@
 # Windows popup test (CI): checks the reminder popup never takes keyboard
-# focus, that Drank, Snooze and the Drank shortcut (CAP-15) work, and grabs
-# screenshots (incl. the tray badge, issue #11). Needs a debug build, which
-# honours HYDRATION_INTERVAL_SECS.
+# focus, that Drank, Snooze and the Drank shortcut (CAP-15) work, then runs
+# again with the small drop (CAP-16), and grabs screenshots (incl. the tray
+# badge, issue #11). Needs a debug build, which honours HYDRATION_INTERVAL_SECS
+# and HYDRATION_REMINDER_STYLE.
 param(
     [string]$Exe = "src-tauri/target/debug/hydration-reminder.exe",
     [string]$Out = "artifacts",
@@ -75,6 +76,9 @@ function Shot([string]$name, $crop = $null, [int]$zoom = 1) {
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
     if ($crop) {
+        # Keep the crop on screen: a window partly off screen mustn't crash the test.
+        $crop = [System.Drawing.Rectangle]::Intersect($crop, (New-Object System.Drawing.Rectangle 0, 0, $bmp.Width, $bmp.Height))
+        if ($crop.Width -le 0 -or $crop.Height -le 0) { $bmp.Save((Join-Path $Out "$name.png")); $g.Dispose(); $bmp.Dispose(); return }
         $part = $bmp.Clone($crop, $bmp.PixelFormat)
         $big = New-Object System.Drawing.Bitmap ($crop.Width * $zoom), ($crop.Height * $zoom)
         $gb = [System.Drawing.Graphics]::FromImage($big)
@@ -202,21 +206,102 @@ if ($third) {
 }
 
 Check "App still running" (-not $app.HasExited) ""
-if ($edit -ne [IntPtr]::Zero) { [W]::EditText($edit) | Set-Content (Join-Path $Out "notepad-text.txt") }
-if (-not $app.HasExited) { $app.Kill() }
-if (-not $np.HasExited) { $np.Kill() }
+if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit() }
 
 # The log file (#10): warnings must survive a release build with no console.
+# Run 2 appends to the same file, so run 1's checks only see what's there now.
 $logFile = Join-Path $env:LOCALAPPDATA "com.jeffsackey.hydration-reminder\logs\Hydration Reminder.log"
-$logText = if (Test-Path $logFile) { Get-Content $logFile -Raw } else { "" }
+function LogText { if (Test-Path $logFile) { Get-Content $logFile -Raw } else { "" } }
+$logText = LogText
 Check "Log file records the reminder (#10)" ($logText -match "reminder due") $logFile
 Check "Log records the shortcut answer (CAP-15)" ($logText -match "answer by shortcut: Drank") ""
 Check "Shortcut pressed with no reminder answers nothing" (([regex]::Matches($logText, "answer by shortcut")).Count -eq 1) ""
 Check "Shortcuts registered without warnings" ($logText -notmatch "can't (register|release)") $logFile
+
+# 6. Small drop (CAP-16). Run 1 ended Snoozed for 10 minutes (snooze ignores
+# the interval override), so start from a fresh state again.
+$stateFile = Join-Path $env:APPDATA "com.jeffsackey.hydration-reminder\state.json"
+if (Test-Path $stateFile) { Remove-Item $stateFile }
+$env:HYDRATION_REMINDER_STYLE = "drop"
+$app = Start-Process $Exe -PassThru -RedirectStandardOutput (Join-Path $Out "app2-stdout.log") -RedirectStandardError (Join-Path $Out "app2-stderr.log")
+Start-Sleep -Seconds 3
+[W]::Focus($npWin)
+Start-Sleep -Milliseconds 500
+Send-Text "Typing before the drop. "
+
+$drop = [IntPtr]::Zero
+$dropShown = Wait-Until {
+    if ($drop -eq [IntPtr]::Zero) { $script:drop = [W]::FindTop([uint32]$app.Id, "Hydration Reminder Drop") }
+    $drop -ne [IntPtr]::Zero -and [W]::IsWindowVisible($drop)
+} ($IntervalSecs + 30) { Send-Text "." }
+Check "Drop appears (CAP-16)" $dropShown
+if ($dropShown) {
+    $popup2 = [W]::FindTop([uint32]$app.Id, "Hydration Reminder")
+    # Without it the "popup stays hidden" checks below would pass vacuously.
+    Check "Popup window found in the drop run" ($popup2 -ne [IntPtr]::Zero) ""
+    Start-Sleep -Milliseconds 800
+    Check "Focus stays in Notepad when the drop appears" ([W]::GetForegroundWindow() -eq $npWin) (FgName)
+    Check "The popup stays hidden while the drop shows" (-not [W]::IsWindowVisible($popup2)) ""
+    $ex = [W]::GetWindowLong($drop, -20)
+    Check "Drop is no-activate and topmost" ((($ex -band 0x08000000) -ne 0) -and (($ex -band 0x8) -ne 0)) ("exstyle 0x{0:X8}" -f $ex)
+    $d = [W]::ContentRect($drop)
+    $ds = [W]::GetDpiForWindow($drop) / 96.0
+    $want = 56 * $ds
+    Check "Drop is 56 DIP square" ([math]::Abs(($d.Right - $d.Left) - $want) -le 2 -and [math]::Abs(($d.Bottom - $d.Top) - $want) -le 2) ("content {0}x{1}, want {2}" -f ($d.Right - $d.Left), ($d.Bottom - $d.Top), $want)
+    $gapR = $wa.Right - $d.Right; $gapB = $wa.Bottom - $d.Bottom
+    $m = 12 * $ds
+    Check "Drop sits bottom-right, 12 px above the taskbar and from the edge" ([math]::Abs($gapR - $m) -le 2 -and [math]::Abs($gapB - $m) -le 2) ("gaps right {0}, bottom {1}" -f $gapR, $gapB)
+    Shot "6-drop-shown"
+    Shot "drop-4x" (New-Object System.Drawing.Rectangle ($d.Left - 8), ($d.Top - 8), ($d.Right - $d.Left + 16), ($d.Bottom - $d.Top + 16)) 4
+
+    # Click the drop: the popup replaces it, focus never leaves Notepad.
+    [W]::Click([int](($d.Left + $d.Right) / 2), [int](($d.Top + $d.Bottom) / 2))
+    $swapped = Wait-Until { [W]::IsWindowVisible($popup2) -and -not [W]::IsWindowVisible($drop) } 5
+    Check "Clicking the drop shows the popup and hides the drop" $swapped
+    Start-Sleep -Milliseconds 500
+    Check "Focus is in Notepad after clicking the drop" ([W]::GetForegroundWindow() -eq $npWin) (FgName)
+    Shot "7-popup-from-drop"
+    if ($swapped) {
+        $r2 = [W]::ContentRect($popup2)
+        $s2 = [W]::GetDpiForWindow($popup2) / 96.0
+        [W]::Click([int]($r2.Right - 58 * $s2), [int]($r2.Bottom - 53 * $s2))
+        Check "Drank on the opened popup hides it" (Wait-Until { -not [W]::IsWindowVisible($popup2) } 5)
+        Start-Sleep -Milliseconds 500
+        Check "Focus is back in Notepad after Drank from the drop" ([W]::GetForegroundWindow() -eq $npWin) (FgName)
+    }
+
+    # Next drop, answered with the Snooze shortcut while typing.
+    $again = Wait-Until { [W]::IsWindowVisible($drop) } ($IntervalSecs + 15) { Send-Text "." }
+    Check "Drop appears again (not the popup) after the opened one was answered" ($again -and -not [W]::IsWindowVisible($popup2))
+    if ($again) {
+        Start-Sleep -Milliseconds 800
+        Send-Text "^%s"
+        Check "Ctrl+Alt+S hides the drop" (Wait-Until { -not [W]::IsWindowVisible($drop) } 5)
+        Start-Sleep -Milliseconds 500
+        Check "Focus stays in Notepad after the shortcut on the drop" ([W]::GetForegroundWindow() -eq $npWin) (FgName)
+        Check "The popup never showed for the shortcut answer" (-not [W]::IsWindowVisible($popup2)) ""
+        Shot "8-after-drop-shortcut"
+    }
+} else {
+    Shot "fail-no-drop"
+}
+Check "App still running after the drop run" (-not $app.HasExited) ""
+if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit() }
+if (-not $np.HasExited) {
+    if ($edit -ne [IntPtr]::Zero) { [W]::EditText($edit) | Set-Content (Join-Path $Out "notepad-text.txt") }
+    $np.Kill()
+}
+
+$all = LogText
+$log2 = if ($all.Length -ge $logText.Length) { $all.Substring($logText.Length) } else { $all }
+Check "Run 2 used the drop style override" ($log2 -match "reminder style overridden to Drop") ""
+Check "Log records the drop click" ($log2 -match "drop opened") ""
+Check "Log records exactly one shortcut answer in run 2 (Snooze)" (([regex]::Matches($log2, "answer by shortcut")).Count -eq 1 -and $log2 -match "answer by shortcut: Snooze") ""
+Check "Drop run logged no window or shortcut warnings" ($log2 -notmatch "can't (register|release)|(drop|popup) .*failed|window missing|not sent|update failed|restore failed|click ignored") ""
 if (Test-Path $logFile) { Copy-Item $logFile (Join-Path $Out "app-logfile.log") }
 
 # Summary
-$md = @("## Windows popup test", "", "| Check | Result | Detail |", "|---|---|---|")
+$md = @("## Windows popup and drop test", "", "| Check | Result | Detail |", "|---|---|---|")
 foreach ($x in $results) { $md += "| $($x.Check) | $(if ($x.Pass) { '✅' } else { '❌' }) | $($x.Detail) |" }
 $md += "", "Screenshots (incl. a 4x crop of the tray badge for #11) are in the ``windows-popup-test`` artifact."
 if ($env:GITHUB_STEP_SUMMARY) { $md -join "`n" | Add-Content $env:GITHUB_STEP_SUMMARY }

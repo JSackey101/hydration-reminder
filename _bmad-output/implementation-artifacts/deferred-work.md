@@ -46,3 +46,7 @@
   summary: No automated tests for the recording code in settings.ts, or for a custom stored shortcut being the one registered.
   evidence: Reviews V2, V3 and B9; there is no JS test runner and CI uses only the defaults. Checked by hand in the story 5 Mac test.
   home: issue #15 (tech-debt), extended with these cases.
+- source_spec: `_bmad-output/specs/spec-hydration-reminder/stories/6-small-drop-reminder-style.md`
+  summary: Nothing automated tests the Settings "Reminder style" radios, from the radio through `save_reminder_style` to the saved state.
+  evidence: Review V1; there's no JS test runner, and the Windows CI drop run uses the in-memory env override, not Settings. Checked by hand in the story 6 Mac test.
+  home: issue #15 (tech-debt), extended with this case.

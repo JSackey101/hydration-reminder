@@ -7,7 +7,7 @@ mod shortcuts;
 mod tray;
 
 use chrono::Local;
-use scheduler::{Action, Answer, Phase, Settings, State};
+use scheduler::{Action, Answer, Phase, ReminderStyle, Settings, State};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -22,6 +22,9 @@ const TICK: Duration = Duration::from_secs(1);
 /// disable recording shortcuts.
 const REMINDER_SHOWING_EVENT: &str = "reminder-showing";
 
+/// Tells the drop page it has just been shown, so it pulses (CAP-16).
+const DROP_SHOWN_EVENT: &str = "drop-shown";
+
 /// Debug builds only: `HYDRATION_INTERVAL_SECS` shortens the interval for
 /// testing. Held in memory, never saved.
 fn interval_override() -> Option<u32> {
@@ -29,6 +32,22 @@ fn interval_override() -> Option<u32> {
         std::env::var("HYDRATION_INTERVAL_SECS").ok()?.parse().ok()
     } else {
         None
+    }
+}
+
+/// Debug builds only: `HYDRATION_REMINDER_STYLE=drop|popup` overrides the
+/// reminder style (used by the Windows CI test). Held in memory, never saved.
+fn style_override() -> Option<ReminderStyle> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    match std::env::var("HYDRATION_REMINDER_STYLE").ok()?.as_str() {
+        "drop" => Some(ReminderStyle::Drop),
+        "popup" => Some(ReminderStyle::Popup),
+        other => {
+            log::warn!("ignoring HYDRATION_REMINDER_STYLE={other:?} (drop or popup)");
+            None
+        }
     }
 }
 
@@ -53,9 +72,28 @@ fn tray_view(s: &State) -> (u32, bool) {
     (s.count(), s.phase == Phase::Prompting)
 }
 
-/// The popup change a state change calls for: `Some(true)` = show it,
-/// `Some(false)` = hide it, `None` = leave it as it is.
-fn popup_change(prev: &State, next: &State) -> Option<bool> {
+/// What the reminder looks like on screen (CAP-16).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum View {
+    Hidden,
+    Drop,
+    Popup,
+}
+
+fn view(s: &State) -> View {
+    if s.phase != Phase::Prompting {
+        View::Hidden
+    } else if s.reminder_style() == ReminderStyle::Drop && !s.expanded {
+        View::Drop
+    } else {
+        View::Popup
+    }
+}
+
+/// Entering or leaving Prompting: `Some(true)` = a reminder started (register
+/// the shortcuts), `Some(false)` = it ended (release them), `None` = neither.
+/// Opening the drop or changing the style mid-reminder is not a change here.
+fn prompting_change(prev: &State, next: &State) -> Option<bool> {
     let (was, is) = (
         prev.phase == Phase::Prompting,
         next.phase == Phase::Prompting,
@@ -67,16 +105,44 @@ fn popup_change(prev: &State, next: &State) -> Option<bool> {
 #[derive(Debug, PartialEq, Eq)]
 struct Effects {
     render_tray: bool,
-    /// See `popup_change`.
-    popup: Option<bool>,
+    /// See `prompting_change`. Drives the shortcuts and the settings event.
+    prompting: Option<bool>,
+    /// The new view, if it changed. Drives the windows only.
+    view: Option<View>,
+    /// Memory-only fields (an opened drop, debug overrides) never count.
     save: bool,
 }
 
 fn effects(prev: &State, next: &State, saved: Option<&State>) -> Effects {
+    let next_view = view(next);
     Effects {
         render_tray: tray_view(prev) != tray_view(next),
-        popup: popup_change(prev, next),
-        save: saved != Some(next),
+        prompting: prompting_change(prev, next),
+        view: (view(prev) != next_view).then_some(next_view),
+        save: !saved.is_some_and(|s| s.same_on_disk(next)),
+    }
+}
+
+/// Puts the windows in line with `v`: shows the new one before hiding the
+/// other, so a swap never leaves a gap. Main thread only.
+fn show_view<R: Runtime>(app: &AppHandle<R>, v: View) {
+    match v {
+        View::Hidden => {
+            popup::hide(app, &popup::POPUP);
+            popup::hide(app, &popup::DROP);
+        }
+        View::Drop => {
+            popup::show(app, &popup::DROP);
+            popup::hide(app, &popup::POPUP);
+            // The page pulses once each time it appears.
+            if let Err(e) = app.emit_to(popup::DROP.label, DROP_SHOWN_EVENT, ()) {
+                log::warn!("drop-shown not sent: {e}");
+            }
+        }
+        View::Popup => {
+            popup::show(app, &popup::POPUP);
+            popup::hide(app, &popup::DROP);
+        }
     }
 }
 
@@ -87,16 +153,16 @@ impl<R: Runtime> Inner<R> {
     }
 }
 
-/// The single path for every state change. Effects follow the phase change,
-/// not the action: entering Prompting shows the popup and registers the
-/// shortcuts, leaving it hides the popup and releases them.
+/// The single path for every state change. Effects follow the state, not the
+/// action: a view change shows or hides the popup or drop; entering Prompting
+/// registers the shortcuts, leaving it releases them.
 ///
 /// The lock is held while effects are issued so they keep their order. Popup
 /// calls go through `run_on_main_thread`: queued from other threads, but run
-/// inline when `apply` is already on the main thread (setup). So `popup::show`
-/// and `popup::hide` (and `shortcuts::register` / `release`) must never take
-/// the `Core` lock. Outside setup the main thread never takes it: commands are
-/// async, so they run off the main thread, and the tray menu hands Log and
+/// inline when `apply` is already on the main thread (setup). So `show_view`
+/// (and `shortcuts::register` / `release`) must never take the `Core` lock.
+/// Outside setup the main thread never takes it: commands are async, so they
+/// run off the main thread, and the tray menu hands Log and
 /// Undo to a worker thread. This matters because tray updates wait for the
 /// main thread while the lock is held.
 fn apply<R: Runtime>(app: &AppHandle<R>, f: impl FnOnce(State) -> (State, Action)) {
@@ -111,30 +177,38 @@ fn apply<R: Runtime>(app: &AppHandle<R>, f: impl FnOnce(State) -> (State, Action
     if fx.render_tray {
         g.render_tray();
     }
-    if let Some(is) = fx.popup {
+    if fx.prompting.is_some() || fx.view.is_some() {
         let handle = app.clone();
+        let (prompting, view) = (fx.prompting, fx.view);
         let (drank, snooze) = current_shortcuts(&g.state.settings);
         let queued = app.run_on_main_thread(move || {
-            if is {
-                // Hints first, so the popup never shows stale ones; then again
-                // without any combo that failed to register.
-                let labels = shortcuts::Labels::new(&drank, &snooze);
+            // Hints first, so the popup never shows stale ones; then again
+            // without any combo that failed to register.
+            let labels = shortcuts::Labels::new(&drank, &snooze);
+            if prompting == Some(true) {
                 shortcuts::send_labels(&handle, &labels);
-                popup::show(&handle);
-                let live = shortcuts::register(&handle, drank, snooze);
-                if live != labels {
-                    shortcuts::send_labels(&handle, &live);
-                }
-            } else {
-                popup::hide(&handle);
-                shortcuts::release(&handle);
             }
-            if let Err(e) = handle.emit_to(settings::LABEL, REMINDER_SHOWING_EVENT, is) {
+            if let Some(v) = view {
+                show_view(&handle, v);
+            }
+            match prompting {
+                Some(true) => {
+                    let live = shortcuts::register(&handle, drank, snooze);
+                    if live != labels {
+                        shortcuts::send_labels(&handle, &live);
+                    }
+                }
+                Some(false) => shortcuts::release(&handle),
+                None => {}
+            }
+            if let Some(is) = prompting
+                && let Err(e) = handle.emit_to(settings::LABEL, REMINDER_SHOWING_EVENT, is)
+            {
                 log::warn!("reminder state not sent to settings: {e}");
             }
         });
         if let Err(e) = queued {
-            log::warn!("popup update failed: {e}");
+            log::warn!("reminder window update failed: {e}");
         }
     }
 
@@ -213,6 +287,8 @@ struct SettingsView {
     drank_label: String,
     snooze_label: String,
     reminder_showing: bool,
+    /// The saved setting, not a debug override.
+    reminder_style: ReminderStyle,
 }
 
 impl From<&State> for SettingsView {
@@ -227,6 +303,7 @@ impl From<&State> for SettingsView {
             drank_label: labels.drank,
             snooze_label: labels.snooze,
             reminder_showing: s.phase == Phase::Prompting,
+            reminder_style: s.settings.reminder_style,
         }
     }
 }
@@ -347,6 +424,16 @@ async fn save_shortcuts(app: AppHandle, drank: String, snooze: String) -> Result
         Err(e) => log::info!("shortcuts refused: {e}"),
     }
     result
+}
+
+/// Settings "Reminder style" (CAP-16). Applies at once, also to a reminder
+/// on screen.
+#[tauri::command]
+async fn save_reminder_style(app: AppHandle, style: ReminderStyle) {
+    apply(&app, |s| {
+        (scheduler::set_reminder_style(s, style), Action::None)
+    });
+    log::info!("settings: reminder style {style:?}");
 }
 
 /// Marker written once the first launch of a release build has turned on
@@ -476,6 +563,27 @@ async fn snooze(app: AppHandle) {
     answer_popup(&app, Answer::Snooze);
 }
 
+/// A click on the drop (CAP-16): show the popup instead, still Prompting.
+/// Tick first, as for the buttons; a stale click changes nothing.
+#[tauri::command]
+async fn open_reminder(app: AppHandle) {
+    let mut opened = false;
+    apply(&app, |s| {
+        let (s, action) = scheduler::tick(Local::now(), s);
+        let next = scheduler::expand(s);
+        opened = view(&next) == View::Popup && next.expanded;
+        (next, action)
+    });
+    if opened {
+        log::info!("drop opened");
+    } else {
+        log::info!("drop click ignored: no reminder showing");
+    }
+    if let Err(e) = app.run_on_main_thread(popup::restore_focus) {
+        log::warn!("focus restore failed: {e}");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -509,7 +617,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             drank,
             snooze,
+            open_reminder,
             get_settings,
+            save_reminder_style,
             save_settings,
             save_shortcuts,
             get_shortcut_labels,
@@ -529,6 +639,10 @@ pub fn run() {
             state.interval_override_secs = interval_override();
             if let Some(secs) = state.interval_override_secs {
                 log::info!("debug build: interval overridden to {secs} s");
+            }
+            state.style_override = style_override();
+            if let Some(style) = state.style_override {
+                log::info!("debug build: reminder style overridden to {style:?}");
             }
 
             let tray = tray::Tray::build(app.handle())?;
@@ -598,7 +712,7 @@ mod tests {
     #[test]
     fn due_reminder_shows_popup() {
         let (next, _) = scheduler::tick(at(9, 45), waiting());
-        assert_eq!(popup_change(&waiting(), &next), Some(true));
+        assert_eq!(prompting_change(&waiting(), &next), Some(true));
     }
 
     #[test]
@@ -606,31 +720,31 @@ mod tests {
         let prev = prompting();
         for answer in [Answer::Drank, Answer::Snooze] {
             let next = scheduler::answer(at(9, 46), prev.clone(), answer);
-            assert_eq!(popup_change(&prev, &next), Some(false), "{answer:?}");
+            assert_eq!(prompting_change(&prev, &next), Some(false), "{answer:?}");
         }
         let mut timed = prev.clone();
         timed.settings.popup_timeout_min = Some(2);
         let (next, action) = scheduler::tick(at(9, 47), timed.clone());
         assert_eq!(action, Action::TimedOut);
-        assert_eq!(popup_change(&timed, &next), Some(false));
+        assert_eq!(prompting_change(&timed, &next), Some(false));
     }
 
     #[test]
-    fn no_popup_change_without_a_phase_change() {
+    fn no_prompting_change_without_a_phase_change() {
         // Ordinary tick while waiting.
         let (next, _) = scheduler::tick(at(9, 10), waiting());
-        assert_eq!(popup_change(&waiting(), &next), None);
+        assert_eq!(prompting_change(&waiting(), &next), None);
         // Still prompting, a minute later.
         let (next, _) = scheduler::tick(at(9, 46), prompting());
-        assert_eq!(popup_change(&prompting(), &next), None);
+        assert_eq!(prompting_change(&prompting(), &next), None);
         // Day rollover while prompting keeps the popup.
         let (next, action) = scheduler::tick(at(9, 45) + chrono::Duration::days(1), prompting());
         assert_eq!(action, Action::ResetDay);
-        assert_eq!(popup_change(&prompting(), &next), None);
+        assert_eq!(prompting_change(&prompting(), &next), None);
         // Double click: the second press lands in Waiting and changes nothing.
         let after = scheduler::answer(at(9, 46), prompting(), Answer::Drank);
         let again = scheduler::answer(at(9, 46), after.clone(), Answer::Drank);
-        assert_eq!(popup_change(&after, &again), None);
+        assert_eq!(prompting_change(&after, &again), None);
     }
 
     #[test]
@@ -671,7 +785,7 @@ mod tests {
     fn effects_hide_popup_when_logged_from_tray() {
         let p = prompting();
         let logged = scheduler::log_drink(at(9, 46), p.clone());
-        assert_eq!(effects(&p, &logged, Some(&p)).popup, Some(false));
+        assert_eq!(effects(&p, &logged, Some(&p)).prompting, Some(false));
     }
 
     #[test]
@@ -692,6 +806,7 @@ mod tests {
                 "drankLabel": drank_label,
                 "snoozeLabel": snooze_label,
                 "reminderShowing": false,
+                "reminderStyle": "popup",
             })
         );
         s.settings.popup_timeout_min = Some(2);
@@ -704,6 +819,111 @@ mod tests {
             serde_json::to_value(SettingsView::from(&p)).unwrap()["reminderShowing"],
             true
         );
+        // The saved style, never a debug override.
+        s.settings.reminder_style = ReminderStyle::Drop;
+        s.style_override = Some(ReminderStyle::Popup);
+        assert_eq!(
+            serde_json::to_value(SettingsView::from(&s)).unwrap()["reminderStyle"],
+            "drop"
+        );
+    }
+
+    // ---- Story 6: small drop (CAP-16) ----
+
+    fn drop_style(mut s: State) -> State {
+        s.settings.reminder_style = ReminderStyle::Drop;
+        s
+    }
+
+    #[test]
+    fn due_reminder_in_drop_style_shows_the_drop_and_registers() {
+        let w = drop_style(waiting());
+        let (p, _) = scheduler::tick(at(9, 45), w.clone());
+        let fx = effects(&w, &p, Some(&w));
+        assert_eq!(fx.view, Some(View::Drop));
+        assert_eq!(fx.prompting, Some(true));
+    }
+
+    #[test]
+    fn opening_the_drop_swaps_windows_only_and_saves_nothing() {
+        let p = scheduler::tick(at(9, 45), drop_style(waiting())).0;
+        let open = scheduler::expand(p.clone());
+        let fx = effects(&p, &open, Some(&p));
+        assert_eq!(
+            fx,
+            Effects {
+                render_tray: false,
+                prompting: None,
+                view: Some(View::Popup),
+                save: false,
+            }
+        );
+    }
+
+    #[test]
+    fn style_switch_mid_reminder_swaps_windows_only() {
+        let p = prompting();
+        let dropped = scheduler::set_reminder_style(p.clone(), ReminderStyle::Drop);
+        let fx = effects(&p, &dropped, Some(&p));
+        assert_eq!(fx.view, Some(View::Drop));
+        assert_eq!(fx.prompting, None);
+        assert!(fx.save, "the style itself is saved");
+        let back = scheduler::set_reminder_style(dropped.clone(), ReminderStyle::Popup);
+        assert_eq!(
+            effects(&dropped, &back, Some(&dropped)).view,
+            Some(View::Popup)
+        );
+        // An opened drop stays open when the style flips to Drop and back.
+        let open = scheduler::expand(dropped.clone());
+        assert_eq!(view(&open), View::Popup);
+        let fx = effects(
+            &open,
+            &scheduler::set_reminder_style(open.clone(), ReminderStyle::Drop),
+            Some(&open),
+        );
+        assert_eq!(fx.view, None);
+    }
+
+    #[test]
+    fn answering_or_logging_from_the_drop_hides_it_and_releases() {
+        let p = scheduler::tick(at(9, 45), drop_style(waiting())).0;
+        for next in [
+            scheduler::answer(at(9, 46), p.clone(), Answer::Drank),
+            scheduler::answer(at(9, 46), p.clone(), Answer::Snooze),
+            scheduler::log_drink(at(9, 46), p.clone()),
+        ] {
+            let fx = effects(&p, &next, Some(&p));
+            assert_eq!(fx.view, Some(View::Hidden));
+            assert_eq!(fx.prompting, Some(false));
+        }
+    }
+
+    #[test]
+    fn style_change_while_waiting_touches_no_window() {
+        let w = waiting();
+        let dropped = scheduler::set_reminder_style(w.clone(), ReminderStyle::Drop);
+        let fx = effects(&w, &dropped, Some(&w));
+        assert_eq!((fx.view, fx.prompting), (None, None));
+    }
+
+    #[test]
+    fn timeout_while_the_drop_shows_hides_it_and_releases() {
+        let mut w = drop_style(waiting());
+        w.settings.popup_timeout_min = Some(2);
+        let p = scheduler::tick(at(9, 45), w).0;
+        let (next, action) = scheduler::tick(at(9, 47), p.clone());
+        assert_eq!(action, Action::TimedOut);
+        let fx = effects(&p, &next, Some(&p));
+        assert_eq!((fx.view, fx.prompting), (Some(View::Hidden), Some(false)));
+    }
+
+    #[test]
+    fn debug_style_override_picks_the_view_but_is_not_saved() {
+        let mut w = waiting();
+        w.style_override = Some(ReminderStyle::Drop);
+        let (p, _) = scheduler::tick(at(9, 45), w.clone());
+        assert_eq!(view(&p), View::Drop);
+        assert!(!effects(&waiting(), &w, Some(&waiting())).save);
     }
 
     #[test]
@@ -795,7 +1015,7 @@ mod tests {
             .iter()
             .filter_map(|w| w.as_str())
             .collect();
-        for label in [popup::LABEL, settings::LABEL] {
+        for label in [popup::POPUP.label, popup::DROP.label, settings::LABEL] {
             assert!(
                 windows.contains(&label),
                 "capability is missing window {label:?}"
