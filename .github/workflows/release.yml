@@ -73,6 +73,26 @@ jobs:
           releaseName: Hydration Reminder ${{ github.ref_name }}
           releaseBody: Unsigned builds. See the README's Install section for how to open them.
           releaseDraft: true
+      # tauri-action also uploads the macOS .app as a .tar.gz, which only an
+      # auto-updater would use. There's no updater, and users might take it
+      # for the installer, so remove it from the draft release (#21).
+      - name: Remove the .app.tar.gz from the release
+        if: github.event_name == 'push' && runner.os == 'macOS'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          assets=$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')
+          echo "Release assets:"; echo "$assets"
+          found=0
+          while IFS= read -r name; do
+            case "$name" in
+              *.app.tar.gz|*.app.tar.gz.sig)
+                gh release delete-asset "$GITHUB_REF_NAME" "$name" -y
+                echo "Removed $name"; found=1 ;;
+            esac
+          done <<< "$assets"
+          [ "$found" = 1 ] || echo "No .app.tar.gz to remove."
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'push'
         with:
